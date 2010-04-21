@@ -1,0 +1,89 @@
+/*
+ * Copyright (c) 2010, Facebook, Inc.
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ * Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ * Redistributions in binary form must reproduce the above copyright notice,
+ *  this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ * Neither the name Facebook nor the names of its contributors may be used to
+ * endorse or promote products derived from this software without specific
+ * prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+#include <stdio.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <linux/types.h>
+#include <flashcache.h>
+
+void
+usage(char *pname)
+{
+	fprintf(stderr, "Usage: %s ssd_devname\n", pname);
+	exit(1);
+}
+
+char *pname;
+char buf[512];
+
+main(int argc, char **argv)
+{
+	int cache_fd, disk_fd, c;
+	char *disk_devname, *ssd_devname, *cachedev;
+	struct flash_superblock *sb = (struct flash_superblock *)buf;
+	sector_t cache_devsize, disk_devsize;
+	sector_t block_size = 0, cache_size = 0;
+	
+	pname = argv[0];
+	if (argc < 2) 
+		usage(pname);
+	ssd_devname = argv[1];
+	cache_fd = open(ssd_devname, O_RDWR);
+	if (cache_fd < 0) {
+		fprintf(stderr, "Failed to open %s\n", ssd_devname);
+		exit(1);
+	}
+        lseek(cache_fd, 0, SEEK_SET);
+	if (read(cache_fd, buf, 512) < 0) {
+		fprintf(stderr, "Cannot read Flashcache superblock %s\n", ssd_devname);
+		exit(1);		
+	}
+	if (!(sb->cache_sb_state == CACHE_MD_STATE_DIRTY ||
+	      sb->cache_sb_state == CACHE_MD_STATE_CLEAN ||
+	      sb->cache_sb_state == CACHE_MD_STATE_FASTCLEAN ||
+	      sb->cache_sb_state == CACHE_MD_STATE_UNSTABLE)) {
+		fprintf(stderr, "%s: No valid Flashcache found on %s\n", 
+			pname, ssd_devname);
+		exit(1);
+	}
+	fprintf(stderr, "%s: Destroying Flashcache found on %s. Any data will be lost !!\n", 
+		pname, ssd_devname);
+	sb->cache_sb_state = 0;
+        lseek(cache_fd, 0, SEEK_SET);
+	if (write(cache_fd, buf, 512) < 0) {
+		fprintf(stderr, "Cannot write Flashcache superblock %s\n", ssd_devname);
+		exit(1);		
+	}
+}

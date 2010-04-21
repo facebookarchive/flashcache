@@ -1,0 +1,20 @@
+Building Flashcache :
+-------------------
+We've built and tested Flashcache on both 2.6.20 and 2.6.18.
+If you need help with newer kernels, please send email.
+Older than 2.6.18 kernels are not supported.
+
+You'll need the entire kernel source tree in order to build
+flashcache.
+
+At the top directory, run
+
+make KERNEL_TREE=<root of the kernel source tree>
+
+This builds both the flashcache.ko and 3 utilities.
+
+flascache-sa-guide.txt has details on how to create and load
+flashcache volumes.
+
+Mohan Srinivasan
+Paul Saab

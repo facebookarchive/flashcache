@@ -1,0 +1,241 @@
+		FlashCache System Administration Guide
+		--------------------------------------
+
+Introduction :
+============
+Flashcache is a writeback block cache for Linux, built as a kernel module,
+using the Device Mapper. This document is a quick admministration guide 
+to flashcache.
+
+Requirements :
+============
+Flashcache has been built and tested on 2.6.18 and 2.6.20. If you'd like
+to build and use it on a newer kernel, please send me an email and I 
+can help. I will not support older than 2.6.18 kernels.
+
+Cache creation and loading using the flashcache utilities :
+=========================================================
+Included are 3 utilities - flashcache_create, flashcache_load and 
+flashcache_destroy. These utilities use dmsetup internally, presenting
+a simpler interface to create, load and destroy flashcache volumes.
+It is expected that the majority of users can use these utilities
+instead of using dmsetup.
+
+flashcache_create : Create a new flashcache volume.
+
+flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+-s : cache size. Optional. If this is not specified, the entire ssd device
+     is used as cache. The default units is sectors. But you can specify 
+     k/m/g as units as well.
+-b : block size. Optional. Defaults to 4KB. Must be a power of 2.
+     The default units is sectors. But you can specify k as units as well.
+     (A 4KB blocksize is the correct choice for the vast majority of 
+     applications. But see the section "Cache Blocksize selection" below).
+
+Examples :
+flashcache_create -s 1g -b 4k cachedev /dev/sdc /dev/sdb
+Creates a 1GB cache volume with a 4KB block size on ssd device /dev/sdc
+to cache the disk volume /dev/sdb. The name of the device created is
+"cachedev".
+
+flashcache_create -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
+Same as above but units specified in sectors instead. The name of the 
+device created is "cachedev".
+
+flashcache_load : Load an existing flashcache volume.
+
+flashcache_load cachedevname ssd_devname disk_devname
+
+Example :
+flashcache_load cachedev /dev/sdc /dev/sdb
+Load the existing cache on /dev/sdc, calling the flashcache volume
+cachedev.
+
+flashcache_destroy : Destroy an existing flashcache. All data will be lost !!!
+
+flashcache_destroy ssd_devname
+
+Example :
+flashcache_destroy /dev/sdc
+Destroy the existing cache on /dev/sdc. All data is lost !!!
+
+Removing a flashcache volume :
+----------------------------
+Use dmsetup remove to remove a flashcache volume. Note that the 
+default behavior on a remove is to clean all dirty cacheblock to
+disk. The remove will not return until all blocks are cleaned.
+Progress on disk cleaning is reported on the console (also 
+see the "fast_remove" flashcache sysctl).
+
+A reboot of the node will also result in all dirty cache blocks being
+cleaned synchronously (again see the note about "fast_remove" in the
+sysctls section).
+
+Example:
+dmsetup remove cachedev
+
+This removes the flashcache volume name cachedev. Cleaning
+all blocks prior to removal.
+
+Cache Stats :
+===========
+Use 'dmsetup status' for cache statistics.
+
+'dmsetup table' also dumps a number of cache related statistics.
+
+Examples :
+dmsetup status cachedev
+dmsetup table cachedev
+
+Flashcache errors are reported in 
+/proc/flashcache_errors
+
+Flashcache stats are also reported in 
+/proc/flashcache_stats 
+for easier parseability.
+
+Cache Blocksize selection :
+=========================
+Cache blocksize selection is critical for good cache utilization and
+performance. 
+
+For the majority of filesystems and applications, a 4KB blocksize 
+works well and is the right choice.
+
+Some applications use a larger blocksize. In such cases, 
+*with O_DIRECT and XFS*, it is possible (and beneficial) to use
+a larger flashcache blocksize (to match the application blocksize).
+Note that the blocksize must be a power of 2.
+
+An example, MySQL/InnoDB uses 16KB blocksize by default. In this cases, 
+*with O_DIRECT and XFS*, we can use a 16KB flashcache blocksize. 
+If we do this, it is critical to tune XFS's stripe unit (su) to 16KB, 
+and set the stripe width accordingly (man 8 mkfs.xfs). Setting the 
+stripe unit to 16KB will result in XFS sending down 16KB multiple IOs.
+
+# mkfs.xfs -f -d su=16384,sw=40 /dev/cciss/c0d1p4
+
+This sets the stripe unit to 16KB and the stripe width to 
+640KB (16KB * 40).
+
+FlashCache Sysctls :
+==================
+These sysctls will apply to all cache devices on the node.
+
+dev.flashcache.fast_remove:
+	Don't sync dirty blocks when removing cache. On a reload
+	both DIRTY and CLEAN blocks persist in the cache. This 
+	option can be used to do a quick cache remove. 
+	CAUTION: The cache still has uncommitted (to disk) dirty
+	blocks after a fast_remove.
+dev.flashcache.zero_stats:
+	Zero out all cache stats reported by "dmsetup status".
+dev.flashcache.reclaim_policy:
+	FIFO (0) vs LRU (1). Defaults to FIFO. Can be switched at 
+	runtime.
+dev.flashcache.write_merge:
+	Enable write merging. When cleaning blocks tack on any
+	contigous blocks in the set to the ones that are being cleaned
+	Defaults to on.
+dev.flashcache.dirty_thresh_pct:
+	Flashcache will attempt to keep the dirty blocks in each set 
+	under this %. A lower dirty threshold increases disk writes, 
+	and reduces block overwrites, but increases the blocks
+	available for read caching.
+dev.flashcache.do_sync: 
+	Schedule cleaning of all dirty blocks in the cache. 
+
+There is little reason to change these :
+
+dev.flashcache.max_clean_ios_set:
+	Maximum writes that can be issues per set when cleaning
+	blocks.
+dev.flashcache.max_clean_ios_total:
+	Maximum writes that can be issued when syncing all blocks.
+dev.flashcache.debug:
+	Enable verbose debugging.
+dev.flashcache.do_nc_pid_expiry:
+	Enable expiry on the list of non-cacheable pids.
+dev.flashcache.nc_pid_expiry_secs:
+	Set the expiry on the list of non-cacheable pids.
+dev.flashcache.max_nc_pids:
+	Maximum number of non-cacheable pids.
+
+Using dmsetup to create and load flashcache volumes :
+===================================================
+Few users will need to use dmsetup natively to create and load 
+flashcache volumes. This section covers that.
+
+dmsetup create device_name table_file
+
+where
+
+device_name: name of the flashcache device being created or loaded.
+table_file : other cache args (format below). If this is omitted, dmsetup 
+	     attempts to read this from stdin.
+
+table_file format :
+0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+
+flashcache cmd: 
+	   1: load existing cache
+	   2: create cache
+	   3: force create cache (overwriting existing cache). USE WITH CAUTION
+
+blksize in sectors:
+	   4KB (8 sectors, PAGE_SIZE) is the right choice for most applications.
+	   See note on block size selection below.
+	   Unused (can be omitted) for cache loads.
+
+size of cache in sectors:
+	   Optional. if size is not specified, the entire ssd device is used as
+	   cache. Needs to be a power of 2.
+	   Unused (can be omitted) for cache loads.
+
+cache set size:
+	   Optional. The default set size is 512, which works well for most 
+	   applications. Little reason to change this. Needs to be a
+	   power of 2.
+	   Unused (can be omitted) for cache loads.
+
+Example :
+
+echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 2 8 522000000 | dmsetup create cachedev
+
+This creates a cache device called "cachedev" (/dev/mapper/cachedev)
+with a 4KB blocksize to cache /dev/cciss/c0d1p2 on /dev/fioa2.
+The size of the cache is 522000000 sectors.
+
+(TODO : Change loading of the cache happen via "dmsetup load" instead
+of "dmsetup create").
+
+Non-cacheability ioctls :
+=======================
+When doing backups or full database table scans, often we want
+IOs to be non-cacheable by flashcache. 
+
+Flashcache provides support (via ioctls) to mark all IOs for 
+tagged processes be non-cacheable. (Note that this only works
+for O_DIRECT IOs. For buffered IOs, pdflush, kswapd would 
+also do the writes, with flashcache caching those).
+
+The following ioctls are supported on /dev/mapper/<cachedev>
+
+FLASHCACHEADDNCPID: add the pid to the list of pids tagged for
+non-cacheable IOs.
+FLASHCACHEDELNCPID: remove the pid from the list.
+FLASHCACHEDELNCALL: remove all registered non-cacheable pids. 
+This can be used to cleanup if a process dies.
+
+Security Note :
+=============
+With Flashcache, it is possible for a malicious user process to 
+corrupt data in files with only read access. In a future revision
+of flashcache, this will be addressed (with an extra data copy).
+
+Not documenting the mechanics of how a malicious process could 
+corrupt data here.
+
+You can work around this by setting file permissions on files in 
+the flashcache volume appropriately.
+

@@ -1,0 +1,292 @@
+
+	Flashcache : A Write Back Block Cache for Linux
+  Author: Mohan Srinivasan
+	-----------------------------------------------
+
+Introduction :
+============
+Flashcache is a write back block cache Linux kernel module. This
+document describes the design, futures ideas, configuration, tuning of
+the flashcache and concludes with a note covering the testability
+hooks within flashcache and the testing that we did. Flashcache was
+built primarily as a block cache for InnoDB but is general purpose and
+can be used by other applications as well.
+
+Design :
+======
+Flashcache is built using the Linux Device Mapper (DM), part of the
+Linux Storage Stack infrastructure that facilitates building SW-RAID
+and other components. LVM, for example, is built using the DM.
+
+The cache is structured as a set associative hash, where the cache is
+divided up into a number of fixed size sets (buckets) with linear
+probing within a set to find blocks. The set associative hash has a
+number of advantages (called out in sections below) and works very
+well in practice.
+
+The block size, set size and cache size are configurable parameters,
+specified at cache creation. The default set size is 512 (blocks) and
+there is little reason to change this.
+
+In what follows, dbn refers to  "disk block number", the logical
+device block number in sectors.
+
+To compute the target set for a given dbn
+
+	 target set = (dbn / block size / set size) mod (number of sets)
+
+Once we have the target set, linear probe within the set finds the
+block. Note that a sequential range of disk blocks will all map onto a
+given set.
+
+The DM layer breaks up all IOs into blocksize chunks before passing
+the IOs down to the cache layer. Flashcache caches all full blocksize
+IOs.
+
+Replacement policy is either FIFO or LRU within a cache set. The
+default is FIFO but policy can be switched at any point at run time
+via a sysctl (see the configuration and tuning section).
+
+To handle a cache read, compute the target set (from the dbn), linear
+search for the dbn in the set. In the case of a cache hit, the read is
+serviced from flash. For a cache miss, the data is read from disk,
+populated into flash and the data returned from the read.
+
+Since the cache is writeback, a write only writes to flash,
+synchronously updates the cache metadata (to mark the cache block as
+dirty) and completes the write. On a block re-dirty, the metadata
+update is skipped.
+
+It is important to note that in the first cut, cache writes are
+non-atomic, ie, the "Torn Page Problem" exists. In the event of a
+power failure or a failed write, part of the block could be written,
+resulting in a partial write. We have ideas on how to fix this and
+provide atomic cache writes (see the Futures section).
+
+Each cache block has on-flash metadata associated with it for cache
+persistence. This per-block metadata consists of the dbn (disk block
+cached in this slot) and flags (DIRTY, VALID, INVALID).
+
+Cache metadata is only updated on a write or when a cache block is
+cleaned. The former results in the state being marked DIRTY and the
+latter results in the state being marked ~DIRTY. To minimize small
+flash writes, cache block metadata is not updated in the read path.
+
+In addition, we also have a on-flash cache superblock, which contains
+cache parameters (read on a cache reload) and whether the cache
+shutdown was clean (orderly) or unclean (node crash, power failure
+etc).
+
+On an clean cache shutdown, metadata for all cache blocks is written
+out to flash. After an orderly shutdown, both VALID and DIRTY blocks
+will persist on a subsequent cache reload. After a node crash or a
+power failure, only DIRTY cache blocks will persist on a subsequent
+cache reload. Node crashes or power failures will not result in data
+loss, but they will result in the cache losing VALID and non-DIRTY
+cached blocks.
+
+Cache metadata updates are "batched" when possible. So if we have
+pending metadata updates to multiple cache blocks which fall on the
+same metadata sector, we batch these updates into 1 flash metadata
+write. When a file is written sequentially, we will commonly be able
+to batch several metadata updates (resulting from sequential block
+writes) into 1 cache metadata update.
+
+Dirty cache blocks are written lazily to disk in the background.
+Flashcache's lazy writing is controlled by a configurable dirty
+threshold (see the configuration and tunings section). Flashcache
+strives to keep the percentage of dirty blocks in each set below the
+dirty threshold. When the dirty blocks in a set exceeds the dirty
+threshold, the set is eligible for cleaning.
+
+DIRTY blocks are selected for cleaning based on the replacement policy
+(FIFO vs LRU). Once we have a target set of blocks to clean, we sort
+these blocks, search for other contigous dirty blocks in the set
+(which can be cleaned for free since they'll be merged into a large
+IO) and send the writes down to the disk.
+
+As mentioned earlier, the DM will break IOs into blocksize pieces
+before passing them on to flashcache. For smaller (than blocksize) IOs
+or IOs that straddle 2 cache blocks, we pass the IO directly to disk.
+But before doing so, we invalidate any cacheblocks that overlap the
+IO. If the overlapping cacheblocks are DIRTY we clean those
+cacheblocks and pass the new overlapping IO do disk after those are
+successfully cleaned. Invalidating cacheblocks for IOs that overlap 2
+cache blocks is easy with a set associative hash, we need to search
+for overlaps precisely in 2 cache sets.
+
+Flashcache has support for block checksums, which are computed on
+cache population and validated on every cache read. Block checksums is
+a compile switch, turned off by default because of the "Torn Page"
+problem. If a cache write fails after part of the block was committed
+to flash, the block checksum will be wrong and any subsequent attempt
+to read that block will fail (because of checksum mismatches).
+
+How much cache metadata overhead do we incur ? For each cache block,
+we have in-memory state of 24 bytes (on 64 bit architectures) and 16
+bytes of on-flash metadata state. For a 300GB cache with 16KB blocks,
+we have approximately 20 Million cacheblocks, resulting in an
+in-memory metadata footprint of 480MB. If we were to configure a 300GB
+cache with 4KB pages, that would quadruple to 1.8GB.
+
+It is possible to mark IOs issued by particular pids as noncacheable
+via flashcache ioctls. If a process is about to scan a large table
+sequentially (for a backup say), it can mark itself as non-cacheable.
+For a read issued by a "non cacheable" process, if the read results
+in a cache hit, the data is served from cache. If the read results in
+a cache miss, the read is served directly from disk (without a cache
+population). For a write issued by a non cacheable process, the
+write is sent directly to disk. But before that is done, we invalidate
+any overlapping cache blocks (cleaning them first if necessary).
+
+A few things to note about tagging pids non-cacheable. First, this
+only really works reliably with Direct IO. For buffered IO, writes
+will almost always happen from kernel threads (eg pdflush). So writes
+will continue to be cached. For most filesystems, these ioctls will
+make buffered reads uncached - readaheads will be kicked off the filemap
+code, so the readaheads will be kicked off from the same context as the
+reads.
+
+If a process that marked itself non-cacheable dies, flashcache has
+no way of cleaning up (the Linux kernel doesn't have a at_exit() hook).
+Applications have to work around this (see configuration below). The
+cleanup issue can be fixed by making the cache control aspect of
+flashcache a pseudo-filesystem so that the last close of the fd on
+process exit cleans things up (see Futures for more details).
+
+In spite of the limitations, we think the ability to mark Direct IOs
+issued by a pid will be valuable to prevent backups from wiping out
+the cache.
+
+Futures and Features :
+====================
+Cache Mirroring :
+---------------
+Mirroring the cache across 2 physical flash devices should work
+without any code changes. Since the cache device is a block device, we
+can build a RAID-0 block device out of the 2 physical flash devices
+and use that as our cache device. (I have not yet tested this yet).
+
+Cache Resizing :
+--------------
+The easiest way to resize the cache is to bring the cache offline, and
+then resize. Resizing the cache when active is complicated and bug
+prone.
+
+Integration with ATA TRIM Command :
+---------------------------------
+The ATA TRIM command was introduced as a way for the filesystem to
+inform the ssd that certain blocks were no longer in use to faciliate
+improved wear levelling algorithms in the ssd controller. Flashcache
+can leverage this as well. We can simply discard all blocks falling
+within a TRIM block range from the cache regardless of the state,
+since they are no longer needed.
+
+Deeper integration with filesystems :
+-----------------------------------
+Non-cacheability could be much better implemented with a deeper
+integration of flashcache and the filesystem. The filesystem could
+easily tag IOs as non-cacheable, based on user actions.
+
+Fixing the "Torn Page Problem" (make Cache Writes atomic) :
+---------------------------------------------------------
+As mentioned above, cache block writes are non-atomic. If we have a
+power failure or if the flash write fails, part of the block (a few
+sectors) could be written out, corrupting the block. In this respect,
+flashcache behaves no different from disk.
+
+We have ideas on how to fix this and achieve atomic cache block writes
+using shadow paging techniques. Mark C. says that we could avoid
+doublebuffer writes if we have atomic cache block writes. However,
+with flashcache, doublebuffer writes will all be absorbed by the flash
+(and we should get excellent write hits/overwrites for doublebuffer
+blocks so they would never hit disk). So it is not clear how much of a
+win atomic cache block writes will be.
+
+It is however a handy feature to provide. If we have atomic block
+writes we could also enable cache block checksums.
+
+There are broadly 3 ways to fix this.
+1) If the flash device offers configurable sector sizes, configure it
+to match the cache block size (FusionIO offers upto a 4KB configurable
+sector size).
+2) If we choose a shadow page that falls in the same metadata sector
+as the page being overwritten, we can do the shadow page write and
+switch the metadata atomically.
+3) If we don't want the restriction that the shadow page and the page
+overwritten are part of the same metadata sector, to allow us to pick
+a shadow page more freely across the cache set, we would need to
+introduce a monotonically increasing timestamp per write in the cache
+metadata that will allow us to disambiguate dirty blocks in the event
+of a crash.
+
+Breaking up the cache spinlock :
+------------------------------
+All cache state is protected by a single spinlock. Currently CPU
+utilization in the cache routines is very low, and there is no
+contention on this spinlock. That may change in the future.
+
+Make non-cacheability more robust :
+---------------------------------
+The non-cacheability aspect need fixing in terms of cleanup when a
+process dies. Probably the best way to approach this is to approach
+this in a pseudo filesystemish way.
+
+Several other implementation TODOs/Futures are documented in the code.
+
+Testing and Testability :
+=======================
+Stress Tester :
+-------------
+I modified NetApps open source sio load generator, adding support for
+data verification to it with block checksums maintained in an
+mmap'ed file. I've been stress testing the cache with this tool. We
+can vary the read/write mix, seq/rand IO mix, block size, direct IO vs
+buffered IO, number of IO threads etc with this tool.
+
+In addition, I've used other workloads to stress test flashcache.
+
+Error Injection :
+---------------
+I've added hooks for injecting all kinds of errors into the flashcache
+code (flash IO errors, disk IO errors, various kernel memory
+allocation errors). The error injection can be controlled by a sysctl
+"error_inject". Writing the following flags into "error_inject" causes
+the next event of that type to result in an error. The flag is cleared
+after the error is simulated. So we'd need to set the flag for each
+error we'd like to simulate.
+
+/* Error injection flags */
+#define READDISK_ERROR				0x00000001
+#define READCACHE_ERROR				0x00000002
+#define READFILL_ERROR				0x00000004
+#define WRITECACHE_ERROR			0x00000008
+#define WRITECACHE_MD_ERROR			0x00000010
+#define WRITEDISK_MD_ERROR			0x00000020
+#define KCOPYD_CALLBACK_ERROR			0x00000040
+#define DIRTY_WRITEBACK_JOB_ALLOC_FAIL		0x00000080
+#define READ_MISS_JOB_ALLOC_FAIL		0x00000100
+#define READ_HIT_JOB_ALLOC_FAIL			0x00000200
+#define READ_HIT_PENDING_JOB_ALLOC_FAIL		0x00000400
+#define INVAL_PENDING_JOB_ALLOC_FAIL		0x00000800
+#define WRITE_HIT_JOB_ALLOC_FAIL		0x00001000
+#define WRITE_HIT_PENDING_JOB_ALLOC_FAIL	0x00002000
+#define WRITE_MISS_JOB_ALLOC_FAIL		0x00004000
+#define WRITES_LIST_ALLOC_FAIL			0x00008000
+#define MD_ALLOC_SECTOR_ERROR			0x00010000
+
+I then use a script like this to simulate errors under heavy IO load.
+
+#!/bin/bash
+
+for ((debug = 0x00000001 ; debug<=0x00010000 ; debug=debug*2))
+do
+        echo $debug >/proc/sys/dev/flashcache/error_inject
+        sleep 1
+done
+
+Acknowledgements :
+================
+I would like to thank Bob English for doing a critical review of the
+design and the code of flashcache, for discussing this in detail with
+me and providing valuable suggestions.

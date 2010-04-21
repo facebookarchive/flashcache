@@ -1,0 +1,577 @@
+/****************************************************************************
+ *  flashcache_subr.c
+ *  FlashCache: Device mapper target for block-level disk caching
+ *
+ *  Copyright 2010 Facebook, Inc.
+ *  Author: Mohan Srinivasan (mohan@facebook.com)
+ *
+ *  Based on DM-Cache:
+ *   Copyright (C) International Business Machines Corp., 2006
+ *   Author: Ming Zhao (mingzhao@ufl.edu)
+ * 
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; under version 2 of the License.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ ****************************************************************************/
+
+#include <asm/atomic.h>
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/list.h>
+#include <linux/blkdev.h>
+#include <linux/bio.h>
+#include <linux/slab.h>
+#include <linux/hash.h>
+#include <linux/spinlock.h>
+#include <linux/workqueue.h>
+#include <linux/pagemap.h>
+#include <linux/random.h>
+#include <linux/hardirq.h>
+#include <linux/sysctl.h>
+#include <linux/version.h>
+#include <linux/sort.h>
+
+#include "dm.h"
+#include "dm-io.h"
+#include "dm-bio-list.h"
+#include "kcopyd.h"
+#include "flashcache.h"
+
+static DEFINE_SPINLOCK(_job_lock);
+
+extern mempool_t *_job_pool;
+extern mempool_t *_pending_job_pool;
+
+extern atomic_t nr_cache_jobs;
+extern atomic_t nr_pending_jobs;
+
+LIST_HEAD(_pending_jobs);
+LIST_HEAD(_io_jobs);
+LIST_HEAD(_md_io_jobs);
+LIST_HEAD(_md_complete_jobs);
+
+int
+flashcache_pending_empty(void)
+{
+	return list_empty(&_pending_jobs);
+}
+
+int
+flashcache_io_empty(void)
+{
+	return list_empty(&_io_jobs);
+}
+
+int
+flashcache_md_io_empty(void)
+{
+	return list_empty(&_md_io_jobs);
+}
+
+int
+flashcache_md_complete_empty(void)
+{
+	return list_empty(&_md_complete_jobs);
+}
+
+struct kcached_job *
+flashcache_alloc_cache_job(void)
+{
+	struct kcached_job *job;
+
+	job = mempool_alloc(_job_pool, GFP_NOIO);
+	if (likely(job))
+		atomic_inc(&nr_cache_jobs);
+	return job;
+}
+
+void
+flashcache_free_cache_job(struct kcached_job *job)
+{
+	mempool_free(job, _job_pool);
+	atomic_dec(&nr_cache_jobs);
+}
+
+struct pending_job *
+flashcache_alloc_pending_job(struct cache_c *dmc)
+{
+	struct pending_job *job;
+
+	job = mempool_alloc(_pending_job_pool, GFP_ATOMIC);
+	if (likely(job))
+		atomic_inc(&nr_pending_jobs);
+	else
+		dmc->memory_alloc_errors++;
+	return job;
+}
+
+void
+flashcache_free_pending_job(struct pending_job *job)
+{
+	mempool_free(job, _pending_job_pool);
+	atomic_dec(&nr_pending_jobs);
+}
+
+#ifdef FLASHCACHE_DO_CHECKSUMS
+int
+flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
+{
+	struct io_region where;
+	int error;
+	u_int64_t sum = 0, *idx;
+	int cnt;
+
+	where.bdev = dmc->cache_dev->bdev;
+	where.sector = (index << dmc->block_shift) + dmc->md_sectors;
+	where.count = dmc->block_size;
+	error = flashcache_dm_io_sync_vm(&where, READ, block);
+	if (error)
+		return error;
+	cnt = dmc->block_size * 512;
+	idx = (u_int64_t *)block;
+	while (cnt > 0) {
+		sum += *idx++;
+		cnt -= sizeof(u_int64_t);		
+	}
+	dmc->cache[index].checksum = sum;
+	return 0;
+}
+
+u_int64_t
+flashcache_compute_checksum(struct bio *bio)
+{
+	int i;	
+	u_int64_t sum = 0, *idx;
+	int cnt;
+
+	for (i = bio->bi_idx ; i < bio->bi_vcnt ; i++) {
+		idx = (u_int64_t *)
+			(kmap(bio->bi_io_vec[i].bv_page) + 
+			 bio->bi_io_vec[i].bv_offset);
+		cnt = bio->bi_io_vec[i].bv_len;
+		while (cnt > 0) {
+			sum += *idx++;
+			cnt -= sizeof(u_int64_t);
+		}
+		kunmap(bio->bi_io_vec[i].bv_page);
+	}
+	return sum;
+}
+
+void
+flashcache_store_checksum(struct kcached_job *job)
+{
+	u_int64_t sum;
+	unsigned long flags;
+	
+	sum = flashcache_compute_checksum(job->bio);
+	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
+	job->dmc->cache[job->index].checksum = sum;
+	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
+}
+
+int
+flashcache_validate_checksum(struct kcached_job *job)
+{
+	u_int64_t sum;
+	int retval;
+	unsigned long flags;
+	
+	sum = flashcache_compute_checksum(job->bio);
+	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
+	if (likely(job->dmc->cache[job->index].checksum == sum)) {
+		job->dmc->checksum_valid++;		
+		retval = 0;
+	} else {
+		job->dmc->checksum_invalid++;
+		retval = 1;
+	}
+	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
+	return retval;
+}
+#endif
+
+/*
+ * Functions to push and pop a job onto the head of a given job list.
+ */
+struct kcached_job *
+pop(struct list_head *jobs)
+{
+	struct kcached_job *job = NULL;
+	unsigned long flags;
+
+	spin_lock_irqsave(&_job_lock, flags);
+	if (!list_empty(jobs)) {
+		job = list_entry(jobs->next, struct kcached_job, list);
+		list_del(&job->list);
+	}
+	spin_unlock_irqrestore(&_job_lock, flags);
+	return job;
+}
+
+void 
+push(struct list_head *jobs, struct kcached_job *job)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&_job_lock, flags);
+	list_add_tail(&job->list, jobs);
+	spin_unlock_irqrestore(&_job_lock, flags);
+}
+
+void
+push_pending(struct kcached_job *job)
+{
+	push(&_pending_jobs, job);	
+}
+
+void
+push_io(struct kcached_job *job)
+{
+	push(&_io_jobs, job);	
+}
+
+void
+push_md_io(struct kcached_job *job)
+{
+	push(&_md_io_jobs, job);	
+}
+
+void
+push_md_complete(struct kcached_job *job)
+{
+	push(&_md_complete_jobs, job);	
+}
+
+static void
+process_jobs(struct list_head *jobs,
+	     void (*fn) (struct kcached_job *))
+{
+	struct kcached_job *job;
+
+	while ((job = pop(jobs)))
+		(void)fn(job);
+}
+
+void 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+do_work(void *unused)
+#else
+do_work(struct work_struct *unused)
+#endif
+{
+	process_jobs(&_md_complete_jobs, flashcache_md_write_done);
+	process_jobs(&_pending_jobs, flashcache_do_pending);
+	process_jobs(&_md_io_jobs, flashcache_md_write);
+	process_jobs(&_io_jobs, flashcache_do_io);
+}
+
+struct kcached_job *
+new_kcached_job(struct cache_c *dmc, struct bio* bio,
+		int index)
+{
+	struct kcached_job *job;
+
+	job = flashcache_alloc_cache_job();
+	if (unlikely(job == NULL)) {
+		dmc->memory_alloc_errors++;
+		return NULL;
+	}
+	job->dmc = dmc;
+	job->index = index;
+	job->cache.bdev = dmc->cache_dev->bdev;
+	job->cache.sector = (index << dmc->block_shift) + dmc->md_sectors;
+	job->cache.count = dmc->block_size;	
+	job->error = 0;	
+	job->bio = bio;
+	job->disk.sector = dmc->cache[index].dbn;
+	job->disk.bdev = dmc->disk_dev->bdev;
+	job->disk.count = dmc->block_size;
+	job->next = NULL;
+	job->md_sector = NULL;
+	return job;
+}
+
+void
+flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index)
+{
+	int set = index / dmc->assoc;
+	int start_index = set * dmc->assoc;
+	int my_index = index - start_index;
+	struct cacheblock *cacheblk = &dmc->cache[index];
+
+	/* Remove from LRU */
+	if (likely((cacheblk->lru_prev != FLASHCACHE_LRU_NULL) ||
+		   (cacheblk->lru_next != FLASHCACHE_LRU_NULL))) {
+		if (cacheblk->lru_prev != FLASHCACHE_LRU_NULL)
+			dmc->cache[cacheblk->lru_prev + start_index].lru_next = 
+				cacheblk->lru_next;
+		else
+			dmc->cache_sets[set].lru_head = cacheblk->lru_next;
+		if (cacheblk->lru_next != FLASHCACHE_LRU_NULL)
+			dmc->cache[cacheblk->lru_next + start_index].lru_prev = 
+				cacheblk->lru_prev;
+		else
+			dmc->cache_sets[set].lru_tail = cacheblk->lru_prev;
+	}
+	/* And add it to LRU Tail */
+	cacheblk->lru_next = FLASHCACHE_LRU_NULL;
+	cacheblk->lru_prev = dmc->cache_sets[set].lru_tail;
+	if (dmc->cache_sets[set].lru_tail == FLASHCACHE_LRU_NULL)
+		dmc->cache_sets[set].lru_head = my_index;
+	else
+		dmc->cache[dmc->cache_sets[set].lru_tail + start_index].lru_next = 
+			my_index;
+	dmc->cache_sets[set].lru_tail = my_index;
+}
+
+static int 
+cmp_dbn(const void *a, const void *b)
+{
+	if (((struct dbn_index_pair *)a)->dbn < ((struct dbn_index_pair *)b)->dbn)
+		return -1;
+	else
+		return 1;
+}
+
+static void
+swap_dbn_index_pair(void *a, void *b, int size)
+{
+	struct dbn_index_pair temp;
+	
+	temp = *(struct dbn_index_pair *)a;
+	*(struct dbn_index_pair *)a = *(struct dbn_index_pair *)b;
+	*(struct dbn_index_pair *)b = temp;
+}
+
+extern int sysctl_flashcache_write_merge;
+
+/* 
+ * We have a list of blocks to write out to disk.
+ * 1) Sort the blocks by dbn.
+ * 2) (sysctl'able) See if there are any other blocks in the same set
+ * that are contig to any of the blocks in step 1. If so, include them
+ * in our "to write" set, maintaining sorted order.
+ * Has to be called under the cache spinlock !
+ */
+void
+flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
+			int *nr_writes, int set)
+{	
+	int start_index = set * dmc->assoc;
+	int end_index = start_index + dmc->assoc;
+	int old_writes = *nr_writes;
+	int new_inserts = 0;
+	struct dbn_index_pair *set_dirty_list = NULL;
+	int ix, nr_set_dirty;
+	
+	if (unlikely(*nr_writes == 0))
+		return;
+	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
+	     cmp_dbn, swap_dbn_index_pair);
+	if (sysctl_flashcache_write_merge == 0)
+		return;
+	set_dirty_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_ATOMIC);
+	if (set_dirty_list == NULL) {
+		dmc->memory_alloc_errors++;
+		goto out;
+	}
+	nr_set_dirty = 0;
+	for (ix = start_index ; ix < end_index ; ix++) {
+		struct cacheblock *cacheblk = &dmc->cache[ix];
+
+		/*
+		 * Any DIRTY block in "writes_list" will be marked as 
+		 * DISKWRITEINPROG already, so we'll skip over those here.
+		 */
+		if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
+			set_dirty_list[nr_set_dirty].dbn = cacheblk->dbn;
+			set_dirty_list[nr_set_dirty].index = ix;
+			nr_set_dirty++;
+		}
+	}
+	if (nr_set_dirty == 0)
+		goto out;
+	sort(set_dirty_list, nr_set_dirty, sizeof(struct dbn_index_pair),
+	     cmp_dbn, swap_dbn_index_pair);
+	for (ix = 0 ; ix < nr_set_dirty ; ix++) {
+		struct cacheblock *cacheblk = &dmc->cache[set_dirty_list[ix].index];
+		int back_merge, k;
+		
+		back_merge = -1;
+		if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
+			int i;
+			
+			for (i = 0 ; i < *nr_writes ; i++) {
+				int insert;
+				int j = 0;
+				
+				insert = 0;
+				if (cacheblk->dbn + dmc->block_size == writes_list[i].dbn) {
+					/* cacheblk to be inserted above i */
+					insert = 1;
+					j = i;
+					back_merge = j;
+				}
+				if (cacheblk->dbn - dmc->block_size == writes_list[i].dbn ) {
+					/* cacheblk to be inserted after i */
+					insert = 1;
+					j = i + 1;
+				}
+				VERIFY(j < dmc->assoc);
+				if (insert) {
+					cacheblk->cache_state |= DISKWRITEINPROG;
+					/* 
+					 * Shift down everthing from j to ((*nr_writes) - 1) to
+					 * make room for the new entry. And add the new entry.
+					 */
+					for (k = (*nr_writes) - 1 ; k >= j ; k--)
+						writes_list[k + 1] = writes_list[k];
+					writes_list[j].dbn = cacheblk->dbn;
+					writes_list[j].index = cacheblk - &dmc->cache[0];
+					(*nr_writes)++;
+					VERIFY(*nr_writes <= dmc->assoc);
+					new_inserts++;
+					if (back_merge == -1)
+						dmc->front_merge++;
+					else
+						dmc->back_merge++;
+					VERIFY(*nr_writes <= dmc->assoc);
+					break;
+				}
+			}
+		}
+		/*
+		 * If we did a back merge, we need to walk back in the set's dirty list
+		 * to see if we can pick off any more contig blocks. Forward merges don't
+		 * need this special treatment since we are walking the 2 lists in that 
+		 * direction. It would be nice to roll this logic into the above.
+		 */
+		if (back_merge != -1) {
+			for (k = ix - 1 ; k >= 0 ; k--) {
+				int n;
+
+				if (set_dirty_list[k].dbn + dmc->block_size != writes_list[back_merge].dbn)
+					break;
+				dmc->cache[set_dirty_list[k].index].cache_state |= DISKWRITEINPROG;
+				for (n = (*nr_writes) - 1 ; n >= back_merge ; n--)
+					writes_list[n + 1] = writes_list[n];
+				writes_list[back_merge].dbn = set_dirty_list[k].dbn;
+				writes_list[back_merge].index = set_dirty_list[k].index;
+				(*nr_writes)++;
+				VERIFY(*nr_writes <= dmc->assoc);
+				new_inserts++;
+				dmc->back_merge++;
+				VERIFY(*nr_writes <= dmc->assoc);				
+			}
+		}
+	}
+	VERIFY((*nr_writes) == (old_writes + new_inserts));
+out:
+	if (set_dirty_list)
+		kfree(set_dirty_list);
+}
+
+/*
+ * Wrappers for doing DM sync IO, using DM async IO.
+ * It is a shame we need do this, but DM sync IO is interruptible :(
+ * And we want uninterruptible disk IO :)
+ */
+#define FLASHCACHE_DM_IO_SYNC_INPROG	0x01
+
+static DECLARE_WAIT_QUEUE_HEAD(flashcache_dm_io_sync_waitqueue);
+static DEFINE_SPINLOCK(flashcache_dm_io_sync_spinlock);
+
+struct flashcache_dm_io_sync_state {
+	int			error;
+	int			flags;
+};
+
+static void
+flashcache_dm_io_sync_vm_callback(unsigned long error, void *context)
+{
+	struct flashcache_dm_io_sync_state *state = 
+		(struct flashcache_dm_io_sync_state *)context;
+	unsigned long flags;
+	
+	spin_lock_irqsave(&flashcache_dm_io_sync_spinlock, flags);
+	state->flags &= ~FLASHCACHE_DM_IO_SYNC_INPROG;
+	state->error = error;
+	wake_up(&flashcache_dm_io_sync_waitqueue);
+	spin_unlock_irqrestore(&flashcache_dm_io_sync_spinlock, flags);
+}
+
+int
+flashcache_dm_io_sync_vm(struct io_region *where, int rw, void *data)
+{
+        DEFINE_WAIT(wait);
+	struct flashcache_dm_io_sync_state state;
+
+	state.error = -EINTR;
+	state.flags = FLASHCACHE_DM_IO_SYNC_INPROG;
+	dm_io_async_vm(1, where, rw, data, flashcache_dm_io_sync_vm_callback, &state);
+	flashcache_unplug_device(where->bdev);	
+	spin_lock_irq(&flashcache_dm_io_sync_spinlock);
+	while (state.flags & FLASHCACHE_DM_IO_SYNC_INPROG) {
+		prepare_to_wait(&flashcache_dm_io_sync_waitqueue, &wait, 
+				TASK_UNINTERRUPTIBLE);
+		spin_unlock_irq(&flashcache_dm_io_sync_spinlock);
+		schedule();
+		spin_lock_irq(&flashcache_dm_io_sync_spinlock);
+	}
+	finish_wait(&flashcache_dm_io_sync_waitqueue, &wait);
+	spin_unlock_irq(&flashcache_dm_io_sync_spinlock);
+	return state.error;
+}
+
+void
+flashcache_update_sync_progress(struct cache_c *dmc)
+{
+	int dirty_pct;
+	
+	if (dmc->cleanings % 1000)
+		return;
+	if (!dmc->nr_dirty || !dmc->size)
+		return;
+	dirty_pct = (dmc->nr_dirty * 100) / dmc->size;
+	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %d\%", dmc->nr_dirty, dirty_pct);
+	printk(KERN_INFO "\r");
+}
+
+void
+flashcache_unplug_device(struct block_device *bdev)
+{
+	struct backing_dev_info *bdi;
+	
+	bdi = blk_get_backing_dev_info(bdev);
+	if (bdi) {
+		if (bdi->unplug_io_fn)
+			blk_run_backing_dev(bdi, NULL);
+	}
+}
+
+EXPORT_SYMBOL(flashcache_alloc_cache_job);
+EXPORT_SYMBOL(flashcache_free_cache_job);
+EXPORT_SYMBOL(flashcache_alloc_pending_job);
+EXPORT_SYMBOL(flashcache_free_pending_job);
+EXPORT_SYMBOL(pop);
+EXPORT_SYMBOL(push);
+EXPORT_SYMBOL(push_pending);
+EXPORT_SYMBOL(push_io);
+EXPORT_SYMBOL(push_md_io);
+EXPORT_SYMBOL(push_md_complete);
+EXPORT_SYMBOL(process_jobs);
+EXPORT_SYMBOL(do_work);
+EXPORT_SYMBOL(new_kcached_job);
+EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
+EXPORT_SYMBOL(flashcache_dm_io_sync_vm);
+EXPORT_SYMBOL(flashcache_reclaim_lru_movetail);
+EXPORT_SYMBOL(flashcache_merge_writes);
