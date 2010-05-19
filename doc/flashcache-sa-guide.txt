@@ -31,6 +31,7 @@ flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_
      The default units is sectors. But you can specify k as units as well.
      (A 4KB blocksize is the correct choice for the vast majority of 
      applications. But see the section "Cache Blocksize selection" below).
+-f : force create. by pass checks (eg for ssd sectorsize).
 
 Examples :
 flashcache_create -s 1g -b 4k cachedev /dev/sdc /dev/sdb
