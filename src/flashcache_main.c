@@ -76,7 +76,7 @@ extern int sysctl_flashcache_max_nc_pids;
 extern int sysctl_nc_pid_do_expiry;
 extern int sysctl_nc_pid_expiry_check;
 extern int sysctl_flashcache_error_inject;
-
+extern int sysctl_flashcache_stop_sync;
 extern int sysctl_flashcache_reclaim_policy;
 
 void 
@@ -938,7 +938,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 * stop cleanings inside flashcache_dirty_writeback() because we could
 	 * have started a device remove after tested this here.
 	 */
-	if (atomic_read(&dmc->fast_remove_in_prog))
+	if (atomic_read(&dmc->fast_remove_in_prog) || sysctl_flashcache_stop_sync)
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (unlikely(sysctl_flashcache_error_inject & WRITES_LIST_ALLOC_FAIL)) {
@@ -1660,7 +1660,7 @@ flashcache_sync_blocks(struct cache_c *dmc)
 	 * stop cleanings inside flashcache_dirty_writeback_sync() because we could
 	 * have started a device remove after tested this here.
 	 */
-	if (atomic_read(&dmc->fast_remove_in_prog))
+	if (atomic_read(&dmc->fast_remove_in_prog) || sysctl_flashcache_stop_sync)
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (writes_list == NULL) {

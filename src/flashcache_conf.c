@@ -56,6 +56,7 @@ int sysctl_flashcache_error_inject = 0;
 static struct ctl_table_header *flashcache_table_header;
 
 int sysctl_flashcache_sync;
+int sysctl_flashcache_stop_sync = 0;
 int sysctl_flashcache_zerostats;
 int sysctl_flashcache_dirty_thresh = DIRTY_THRESH_DEF;
 int sysctl_flashcache_debug = 0;
@@ -115,14 +116,18 @@ flashcache_sync_sysctl_handler(ctl_table *table, int write,
 	proc_dointvec_minmax(table, write, file, buffer, length, ppos);
 	if (write) {
 		if (sysctl_flashcache_sync) {
+			sysctl_flashcache_stop_sync = 0;
 			(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 					       FLASHCACHE_UPDATE_LIST,
 					       flashcache_wait_schedule, 
 					       TASK_UNINTERRUPTIBLE);
 			for (dmc = cache_list_head ; 
 			     dmc != NULL ; 
-			     dmc = dmc->next_cache)
+			     dmc = dmc->next_cache) {
+				cancel_delayed_work(&dmc->delayed_clean);
+				flush_scheduled_work();
 				flashcache_sync_all(dmc);
+			}
 			clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
 			smp_mb__after_clear_bit();
 			wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
@@ -242,6 +247,14 @@ static ctl_table flashcache_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &flashcache_sync_sysctl_handler,
 		.strategy	= &sysctl_intvec,
+	},
+	{
+		.ctl_name	= FLASHCACHE_WB_STOP_SYNC,
+		.procname	= "stop_sync",
+		.data		= &sysctl_flashcache_stop_sync,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
 	},
 	{
 		.ctl_name	= FLASHCACHE_WB_DIRTY_THRESH,
