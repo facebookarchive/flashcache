@@ -53,6 +53,12 @@
 #define DPRINTK( s, arg... )
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
+#else
+#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))
+#endif
+
 /*
  * Block checksums :
  * Block checksums seem a good idea (especially for debugging, I found a couple 
@@ -143,7 +149,12 @@ struct cache_c {
 	struct dm_dev 		*disk_dev;   /* Source device */
 	struct dm_dev 		*cache_dev; /* Cache device */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
+#else
+	struct dm_kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
+	struct dm_io_client *io_client; /* Client memory pool*/
+#endif
 
 	spinlock_t		cache_spin_lock;
 
@@ -244,8 +255,13 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region disk;
 	struct io_region cache;
+#else
+	struct dm_io_region disk;
+	struct dm_io_region cache;
+#endif
 	int    index;
 	int    action;
 	int 	error;
@@ -385,9 +401,14 @@ int flashcache_map(struct dm_target *ti, struct bio *bio,
 int flashcache_ctr(struct dm_target *ti, unsigned int argc,
 		   char **argv);
 void flashcache_dtr(struct dm_target *ti);
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 int flashcache_ioctl(struct dm_target *ti, struct inode *inode,
 		     struct file *filp, unsigned int cmd,
 		     unsigned long arg);
+#else
+int flashcache_ioctl(struct dm_target *ti, unsigned int cmd,
+ 		     unsigned long arg);
+#endif
 
 int flashcache_status(struct dm_target *ti, status_type_t type,
 		      char *result, unsigned int maxlen);
@@ -429,7 +450,12 @@ void flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 
 			     int *nr_writes, int set);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 int flashcache_dm_io_sync_vm(struct io_region *where, int rw, void *data);
+#else
+int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where, 
+			     int rw, void *data);
+#endif
 void flashcache_update_sync_progress(struct cache_c *dmc);
 void flashcache_unplug_device(struct block_device *bdev);
 #endif /* __KERNEL__ */

@@ -42,10 +42,20 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
+#else
+#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#include "dm.h"
+#endif
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#include <linux/dm-kcopyd.h>
+#endif
+
 #include "flashcache.h"
 
 int sysctl_flashcache_reclaim_policy = FLASHCACHE_FIFO;
@@ -108,12 +118,19 @@ flashcache_wait_schedule(void *unused)
 
 static int 
 flashcache_sync_sysctl_handler(ctl_table *table, int write,
-			       struct file *file, void __user *buffer, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+			       struct file *file, 
+#endif
+			       void __user *buffer, 
 			       size_t *length, loff_t *ppos)
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 	proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+	proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
 	if (write) {
 		if (sysctl_flashcache_sync) {
 			sysctl_flashcache_stop_sync = 0;
@@ -138,12 +155,19 @@ flashcache_sync_sysctl_handler(ctl_table *table, int write,
 
 static int 
 flashcache_zerostats_sysctl_handler(ctl_table *table, int write,
-				    struct file *file, void __user *buffer, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+				    struct file *file, 
+#endif
+				    void __user *buffer, 
 				    size_t *length, loff_t *ppos)
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 	proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+	proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
 	if (write) {
 		if (sysctl_flashcache_zerostats) {
 			(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
@@ -164,12 +188,19 @@ flashcache_zerostats_sysctl_handler(ctl_table *table, int write,
 
 static int
 flashcache_dirty_thresh_sysctl_handler(ctl_table *table, int write,
-				       struct file *file, void __user *buffer, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+				       struct file *file, 
+#endif
+				       void __user *buffer, 
 				       size_t *length, loff_t *ppos)
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
         proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+        proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
 	if (write) {
 		if (sysctl_flashcache_dirty_thresh > DIRTY_THRESH_MAX ||
 		    sysctl_flashcache_dirty_thresh < DIRTY_THRESH_MIN)
@@ -192,13 +223,19 @@ flashcache_dirty_thresh_sysctl_handler(ctl_table *table, int write,
 
 static int
 flashcache_max_clean_ios_total_sysctl_handler(ctl_table *table, int write,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 					      struct file *file, 
+#endif
 					      void __user *buffer, 
 					      size_t *length, loff_t *ppos)
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
         proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+        proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
 	if (write) {
 		(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 				       FLASHCACHE_UPDATE_LIST,
@@ -218,12 +255,19 @@ flashcache_max_clean_ios_total_sysctl_handler(ctl_table *table, int write,
 
 static int
 flashcache_max_clean_ios_set_sysctl_handler(ctl_table *table, int write,
-					    struct file *file, void __user *buffer, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+					    struct file *file, 
+#endif
+					    void __user *buffer, 
 					    size_t *length, loff_t *ppos)
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
         proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+        proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
 	if (write) {
 		(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
 				       flashcache_wait_schedule, TASK_UNINTERRUPTIBLE);
@@ -387,10 +431,17 @@ static ctl_table flashcache_root_table[] = {
 static int 
 flashcache_jobs_init(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	_job_cache = kmem_cache_create("kcached-jobs",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL, NULL);
+#else
+	_job_cache = kmem_cache_create("kcached-jobs",
+	                               sizeof(struct kcached_job),
+	                               __alignof__(struct kcached_job),
+	                               0, NULL);
+#endif
 	if (!_job_cache)
 		return -ENOMEM;
 
@@ -400,11 +451,17 @@ flashcache_jobs_init(void)
 		kmem_cache_destroy(_job_cache);
 		return -ENOMEM;
 	}
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	_pending_job_cache = kmem_cache_create("pending-jobs",
 					       sizeof(struct pending_job),
 					       __alignof__(struct pending_job),
 					       0, NULL, NULL);
+#else
+	_pending_job_cache = kmem_cache_create("pending-jobs",
+					       sizeof(struct pending_job),
+					       __alignof__(struct pending_job),
+					       0, NULL);
+#endif
 	if (!_pending_job_cache) {
 		mempool_destroy(_job_pool);
 		kmem_cache_destroy(_job_cache);
@@ -444,6 +501,7 @@ flashcache_jobs_exit(void)
 static int 
 flashcache_kcached_init(struct cache_c *dmc)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	int r;
 
 	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
@@ -451,6 +509,7 @@ flashcache_kcached_init(struct cache_c *dmc)
 		DMERR("flashcache_kcached_init: Could not resize dm io pool");
 		return r;
 	}
+#endif
 	init_waitqueue_head(&dmc->destroyq);
 	atomic_set(&dmc->nr_jobs, 0);
 	atomic_set(&dmc->fast_remove_in_prog, 0);
@@ -462,7 +521,9 @@ flashcache_kcached_client_destroy(struct cache_c *dmc)
 {
 	/* Wait for all IOs */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));	
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	dm_io_put(FLASHCACHE_ASYNC_SIZE);
+#endif
 }
 
 /*
@@ -474,7 +535,11 @@ flashcache_md_store(struct cache_c *dmc)
 {
 	struct flash_cacheblock *meta_data_cacheblock, *next_ptr;
 	struct flash_superblock *header;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region where;
+#else
+	struct dm_io_region where;
+#endif
 	int i, j;
 	int next_sector;
 	int num_valid = 0, num_dirty = 0;
@@ -511,7 +576,11 @@ flashcache_md_store(struct cache_c *dmc)
 			 * Filled the sector, write it out 
 			 */
 			where.sector = next_sector++;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 			error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+#else
+			error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+#endif
 			if (error) {
 				write_errors++;
 				DMERR("flashcache_md_store: Could not write out cache metadata sector %lu error %d !",
@@ -524,7 +593,11 @@ flashcache_md_store(struct cache_c *dmc)
 	if (next_ptr != meta_data_cacheblock) {
 		/* Write the remaining last sector out */
 		where.sector = next_sector++;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+#else
+		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+#endif
 		if (error) {
 			write_errors++;
 				DMERR("flashcache_md_store: Could not write out cache metadata sector %lu error %d !",
@@ -557,7 +630,11 @@ flashcache_md_store(struct cache_c *dmc)
 	        header->assoc);
 
 	where.sector = 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+#endif
 	if (error) {
 		write_errors++;
 		DMERR("flashcache_md_store: Could not write out cache metadata superblock %lu error %d !",
@@ -586,7 +663,11 @@ flashcache_md_create(struct cache_c *dmc, int force)
 {
 	struct flash_cacheblock *meta_data_cacheblock, *next_ptr;
 	struct flash_superblock *header;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region where;
+#else
+	struct dm_io_region where;
+#endif
 	int i, j, error;
 	int next_sector;
 	sector_t cache_size, dev_size;
@@ -600,7 +681,11 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = 0;
 	where.count = 1;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, READ, header);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
+#endif
 	if (error) {
 		vfree((void *)header);
 		DMERR("flashcache_md_create: Could not read cache superblock sector %lu error %d !",
@@ -682,8 +767,13 @@ flashcache_md_create(struct cache_c *dmc, int force)
 			 * Filled the sector, write it out 
 			 */
 			where.sector = next_sector++;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 			error = flashcache_dm_io_sync_vm(&where, WRITE, 
 							 meta_data_cacheblock);
+#else
+			error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, 
+							 meta_data_cacheblock);
+#endif
 			if (error) {
 				vfree((void *)header);
 				vfree(dmc->cache);
@@ -698,7 +788,11 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	if (next_ptr != meta_data_cacheblock) {
 		/* Write the remaining last sector out */
 		where.sector = next_sector++;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+#else
+		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+#endif
 		if (error) {
 			vfree((void *)header);
 			vfree(dmc->cache);
@@ -720,7 +814,11 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	header->cache_version = FLASHCACHE_VERSION;
 
 	where.sector = 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, WRITE, header);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
+#endif
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
@@ -739,7 +837,11 @@ flashcache_md_load(struct cache_c *dmc)
 {
 	struct flash_cacheblock *meta_data_cacheblock, *next_ptr;
 	struct flash_superblock *header;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region where;
+#else
+	struct dm_io_region where;
+#endif
 	int i, j;
 	int next_sector;
 	int size, slots_read;
@@ -758,7 +860,11 @@ flashcache_md_load(struct cache_c *dmc)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = 0;
 	where.count = 1;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, READ, header);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
+#endif
 	if (error) {
 		vfree((void *)header);
 		DMERR("flashcache_md_load: Could not read cache superblock sector %lu error %d!",
@@ -844,7 +950,11 @@ flashcache_md_load(struct cache_c *dmc)
 		else 
 			slots_read = size;
 		where.sector = next_sector++;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, READ, meta_data_cacheblock);
+#else
+		error = flashcache_dm_io_sync_vm(dmc, &where, READ, meta_data_cacheblock);
+#endif
 		if (error) {
 			vfree((void *)header);
 			vfree(dmc->cache);
@@ -910,7 +1020,11 @@ flashcache_md_load(struct cache_c *dmc)
 	header->cache_version = FLASHCACHE_VERSION;
 
 	where.sector = 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, WRITE, header);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
+#endif
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
@@ -996,11 +1110,29 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	strncpy(dmc->cache_devname, argv[1], DEV_PATHLEN);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
+	if (IS_ERR(dmc->io_client)) {
+		r = PTR_ERR(dmc->io_client);
+		ti->error = "Failed to create io client\n";
+		goto bad3;
+	}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
 	if (r) {
 		ti->error = "Failed to initialize kcopyd client\n";
 		goto bad3;
 	}
+#else
+	r = dm_kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
+	if (r) {
+		ti->error = "Failed to initialize kcopyd client\n";
+		dm_io_client_destroy(dmc->io_client);
+		goto bad3;
+	}
+#endif
 
 	r = flashcache_kcached_init(dmc);
 	if (r) {
@@ -1174,7 +1306,12 @@ init:
 bad5:
 	flashcache_kcached_client_destroy(dmc);
 bad4:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dm_kcopyd_client_destroy(dmc->kcp_client);
+	dm_io_client_destroy(dmc->io_client);
+#else
 	kcopyd_client_destroy(dmc->kcp_client);
+#endif
 bad3:
 	dm_put_device(ti, dmc->cache_dev);
 bad2:
@@ -1228,7 +1365,9 @@ flashcache_dtr(struct dm_target *ti)
 
 	flashcache_sync_for_remove(dmc);
 	flashcache_md_store(dmc);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	dm_io_put(FLASHCACHE_ASYNC_SIZE); /* Must be done after md_store() */
+#endif
 	if (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0)
 		DMERR("Could not sync %d blocks to disk, cache still dirty", 
 		      dmc->nr_dirty);
@@ -1237,8 +1376,11 @@ flashcache_dtr(struct dm_target *ti)
 	for (i = 0 ; i < dmc->size ; i++)
 		nr_queued += dmc->cache[i].nr_queued;
 	DMINFO("cache queued jobs %d", nr_queued);	
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	kcopyd_client_destroy(dmc->kcp_client);
-
+#else
+	dm_kcopyd_client_destroy(dmc->kcp_client);
+#endif
 	if ((dmc->reads > 0) && (dmc->writes > 0)) {
 #ifdef FLASHCACHE_DO_CHECKSUMS
 		DMINFO("stats: reads(%lu), writes(%lu), read hits(%lu), write hits(%lu), " \
@@ -1278,6 +1420,9 @@ flashcache_dtr(struct dm_target *ti)
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_sets);
 	vfree((void *)dmc->md_sectors_buf);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dm_io_client_destroy(dmc->io_client);
+#endif
 	flashcache_del_nc_all(dmc);
 	VERIFY(dmc->num_nc_pids == 0);
 	dm_put_device(ti, dmc->disk_dev);
@@ -1628,8 +1773,13 @@ flashcache_init(void)
 		DMERR("cache: register failed %d", r);
 	}
 #ifdef CONFIG_PROC_FS
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	flashcache_table_header = 
 		register_sysctl_table(flashcache_root_table, 1);
+#else
+	flashcache_table_header = 
+		register_sysctl_table(flashcache_root_table);
+#endif
 	{
 		struct proc_dir_entry *entry;
 		
@@ -1654,10 +1804,14 @@ flashcache_init(void)
 void 
 flashcache_exit(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	int r = dm_unregister_target(&flashcache_target);
 
 	if (r < 0)
 		DMERR("cache: unregister failed %d", r);
+#else
+	dm_unregister_target(&flashcache_target);
+#endif
 	unregister_reboot_notifier(&flashcache_notifier);
 	flashcache_jobs_exit();
 #ifdef CONFIG_PROC_FS

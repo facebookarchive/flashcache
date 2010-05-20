@@ -1,8 +1,9 @@
 Building Flashcache :
 -------------------
-We've built and tested Flashcache on both 2.6.20 and 2.6.18.
-If you need help with newer kernels, please send email.
-Older than 2.6.18 kernels are not supported.
+Update : Vadim Tkachenko (with help from Mohan), ported 
+Flashcache to later Linux releases. We now have built 
+Flashcache on 2.6.18, 2.6.20 and 2.6.27-32. We have tested 
+Flashcache on 2.6.18, 2.6.20, 2.6.27 and 2.6.32.
 
 You'll need the entire kernel source tree in order to build
 flashcache.

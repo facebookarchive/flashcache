@@ -39,10 +39,20 @@
 #include <linux/version.h>
 #include <linux/sort.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
+#else
+#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#include "dm.h"
+#endif
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#include <linux/dm-kcopyd.h>
+#endif
+
 #include "flashcache.h"
 
 static DEFINE_SPINLOCK(_job_lock);
@@ -124,7 +134,11 @@ flashcache_free_pending_job(struct pending_job *job)
 int
 flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region where;
+#else
+	struct dm_io_region where;
+#endif
 	int error;
 	u_int64_t sum = 0, *idx;
 	int cnt;
@@ -132,7 +146,11 @@ flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = (index << dmc->block_shift) + dmc->md_sectors;
 	where.count = dmc->block_size;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, READ, block);
+#else
+	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
+#endif
 	if (error)
 		return error;
 	cnt = dmc->block_size * 512;
@@ -480,6 +498,7 @@ out:
 		kfree(set_dirty_list);
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 /*
  * Wrappers for doing DM sync IO, using DM async IO.
  * It is a shame we need do this, but DM sync IO is interruptible :(
@@ -531,6 +550,29 @@ flashcache_dm_io_sync_vm(struct io_region *where, int rw, void *data)
 	spin_unlock_irq(&flashcache_dm_io_sync_spinlock);
 	return state.error;
 }
+#else
+int
+flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where, int rw, void *data)
+{
+	unsigned long error_bits = 0;
+	int error;
+	struct dm_io_request io_req = {
+		.bi_rw = rw,
+		.mem.type = DM_IO_VMA,
+		.mem.ptr.vma = data,
+		.mem.offset = 0,
+		.notify.fn = NULL,
+		.client = dmc->io_client,
+	};
+
+	error = dm_io(&io_req, 1, where, &error_bits);
+	if (error)
+		return error;
+	if (error_bits)
+		return error_bits;
+	return 0;
+}
+#endif
 
 void
 flashcache_update_sync_progress(struct cache_c *dmc)
@@ -542,7 +584,8 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 	if (!dmc->nr_dirty || !dmc->size)
 		return;
 	dirty_pct = (dmc->nr_dirty * 100) / dmc->size;
-	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %d\%", dmc->nr_dirty, dirty_pct);
+	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %d%%", 
+	       dmc->nr_dirty, dirty_pct);
 	printk(KERN_INFO "\r");
 }
 
@@ -571,7 +614,9 @@ EXPORT_SYMBOL(push_md_complete);
 EXPORT_SYMBOL(process_jobs);
 EXPORT_SYMBOL(do_work);
 EXPORT_SYMBOL(new_kcached_job);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
+#endif
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm);
 EXPORT_SYMBOL(flashcache_reclaim_lru_movetail);
 EXPORT_SYMBOL(flashcache_merge_writes);

@@ -38,10 +38,20 @@
 #include <linux/sysctl.h>
 #include <linux/version.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
+#else
+#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#include "dm.h"
+#endif
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#include <linux/dm-kcopyd.h>
+#endif
+
 #include "flashcache.h"
 #include "flashcache_ioctl.h"
 
@@ -79,6 +89,32 @@ extern int sysctl_flashcache_error_inject;
 extern int sysctl_flashcache_stop_sync;
 extern int sysctl_flashcache_reclaim_policy;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+static int dm_io_async_bvec(unsigned int num_regions, 
+			    struct dm_io_region *where, int rw, 
+			    struct bio_vec *bvec, io_notify_fn fn, 
+			    void *context)
+{
+	struct kcached_job *job = (struct kcached_job *)context;
+	struct cache_c *dmc = job->dmc;
+	struct dm_io_request iorq;
+
+#if 0
+	/* XXX - Why hint SYNCIO ? */
+	iorq.bi_rw = (rw | (1 << BIO_RW_SYNCIO));
+#else
+	iorq.bi_rw = rw;
+#endif
+	iorq.mem.type = DM_IO_BVEC;
+	iorq.mem.ptr.bvec = bvec;
+	iorq.notify.fn = fn;
+	iorq.notify.context = context;
+	iorq.client = dmc->io_client;
+
+	return dm_io(&iorq, num_regions, where, NULL);
+}
+#endif
+
 void 
 flashcache_io_callback(unsigned long error, void *context)
 {
@@ -114,7 +150,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			return;
 		} else {
 			dmc->disk_read_errors++;			
-			bio_endio(bio, bio->bi_size, error);
+			flashcache_bio_endio(bio, error);
 		}
 		break;
 	case READCACHE:
@@ -138,7 +174,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			}
 		}
 #endif
-		bio_endio(bio, bio->bi_size, error);
+		flashcache_bio_endio(bio, error);
 		break;		       
 	case READFILL:
 		DPRINTK("flashcache_io_callback: READFILL %d",
@@ -152,7 +188,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			dmc->ssd_write_errors++;
 		VERIFY(cacheblk->cache_state & DISKREADINPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		bio_endio(bio, bio->bi_size, error);
+		flashcache_bio_endio(bio, error);
 		break;
 	case WRITECACHE:
 		DPRINTK("flashcache_io_callback: WRITECACHE %d",
@@ -188,7 +224,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			dmc->ssd_write_errors++;			
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		}
-		bio_endio(bio, bio->bi_size, error);
+		flashcache_bio_endio(bio, error);
 		break;
 	}
 	/* 
@@ -242,7 +278,7 @@ flashcache_do_pending_error(struct kcached_job *job)
 		VERIFY(cacheblk->nr_queued > 0);
 		cacheblk->nr_queued--;
 		bio = pending_job->bio;
-		bio_endio(bio, bio->bi_size, job->error);
+		flashcache_bio_endio(bio, job->error);
 		flashcache_free_pending_job(pending_job);
 	}
 	VERIFY(cacheblk->nr_queued == 0);
@@ -296,8 +332,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 					 * Memory allocation failure inside inval_blocks.
 					 * Fail this io.
 					 */
-					bio_endio(pending_job->bio, pending_job->bio->bi_size, 
-						  -EIO);
+					flashcache_bio_endio(pending_job->bio, -EIO);
 				}
 				flashcache_free_pending_job(pending_job);
 				continue;
@@ -578,7 +613,11 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	struct cache_c *dmc = job->dmc;	
 	struct flash_cacheblock *md_sector;
 	int md_sector_ix;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region where;
+#else
+	struct dm_io_region where;
+#endif
 	int i;
 	struct cache_md_sector_head *md_sector_head;
 	struct kcached_job *orig_job = job;
@@ -683,7 +722,7 @@ flashcache_md_write_done(struct kcached_job *job)
 				cacheblk->cache_state |= DIRTY;
 			} else
 				dmc->ssd_write_errors++;
-			bio_endio(job->bio, job->bio->bi_size, job->error);
+			flashcache_bio_endio(job->bio, job->error);
 			if (job->error || cacheblk->head) {
 				if (job->error) {
 					DMERR("flashcache: WRITE: Cache metadata write failed ! error %d block %lu", 
@@ -896,7 +935,7 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 			VERIFY(cacheblk->nr_queued > 0);
 			cacheblk->nr_queued--;
 			bio = pending_job->bio;
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 			flashcache_free_pending_job(pending_job);
 		}
 		VERIFY(cacheblk->nr_queued == 0);
@@ -909,8 +948,14 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK;
 		atomic_inc(&dmc->nr_jobs);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			    flashcache_kcopyd_callback, job);
+#else
+		dm_kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
+			       (dm_kcopyd_notify_fn) flashcache_kcopyd_callback, 
+			       (void *)job);
+#endif
 	}
 }
 
@@ -1053,7 +1098,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		 */
 		DMERR("flashcache: Read (miss) failed ! Can't allocate memory for cache IO, block %lu", 
 		      cacheblk->dbn);
-		bio_endio(bio, bio->bi_size, -EIO);
+		flashcache_bio_endio(bio, -EIO);
 		spin_lock_irq(&dmc->cache_spin_lock);
 		dmc->cached_blocks--;
 		cacheblk->cache_state &= ~VALID;
@@ -1064,7 +1109,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 			VERIFY(cacheblk->nr_queued > 0);
 			cacheblk->nr_queued--;
 			bio = pending_job->bio;
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 			flashcache_free_pending_job(pending_job);
 		}
 		VERIFY(cacheblk->nr_queued == 0);
@@ -1129,7 +1174,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 					 */
 					DMERR("flashcache: Read (hit) failed ! Can't allocate memory for cache IO, block %lu", 
 					      cacheblk->dbn);
-					bio_endio(bio, bio->bi_size, -EIO);
+					flashcache_bio_endio(bio, -EIO);
 					spin_lock_irq(&dmc->cache_spin_lock);
 					while (cacheblk->head) {
 						pjob = cacheblk->head;
@@ -1137,7 +1182,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 						VERIFY(cacheblk->nr_queued > 0);
 						cacheblk->nr_queued--;
 						bio = pjob->bio;
-						bio_endio(bio, bio->bi_size, -EIO);
+						flashcache_bio_endio(bio, -EIO);
 						flashcache_free_pending_job(pjob);
 					}
 					VERIFY(cacheblk->nr_queued == 0);
@@ -1161,7 +1206,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 					sysctl_flashcache_error_inject &= ~READ_HIT_PENDING_JOB_ALLOC_FAIL;
 				}
 				if (pjob == NULL)
-					bio_endio(bio, bio->bi_size, -EIO);
+					flashcache_bio_endio(bio, -EIO);
 				else
 					flashcache_enq_pending(dmc, bio, index, READCACHE, pjob);
 				spin_unlock_irq(&dmc->cache_spin_lock);
@@ -1176,7 +1221,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	queued = flashcache_inval_blocks(dmc, bio);
 	if (queued) {
 		if (unlikely(queued < 0))
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		return DM_MAPIO_SUBMITTED;
 	}
@@ -1379,7 +1424,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 					 */
 					DMERR("flashcache: Write (hit) failed ! Can't allocate memory for cache IO, block %lu", 
 					      cacheblk->dbn);
-					bio_endio(bio, bio->bi_size, -EIO);
+					flashcache_bio_endio(bio, -EIO);
 					spin_lock_irq(&dmc->cache_spin_lock);
 					while (cacheblk->head) {
 						pjob = cacheblk->head;
@@ -1387,7 +1432,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 						VERIFY(cacheblk->nr_queued > 0);
 						cacheblk->nr_queued--;
 						bio = pjob->bio;
-						bio_endio(bio, bio->bi_size, -EIO);
+						flashcache_bio_endio(bio, -EIO);
 						flashcache_free_pending_job(pjob);
 					}
 					VERIFY(cacheblk->nr_queued == 0);
@@ -1413,7 +1458,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 					sysctl_flashcache_error_inject &= ~WRITE_HIT_PENDING_JOB_ALLOC_FAIL;
 				}
 				if (unlikely(pjob == NULL))
-					bio_endio(bio, bio->bi_size, -EIO);
+					flashcache_bio_endio(bio, -EIO);
 				else
 					flashcache_enq_pending(dmc, bio, index, WRITECACHE, pjob);
 				spin_unlock_irq(&dmc->cache_spin_lock);
@@ -1424,7 +1469,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 		queued = flashcache_inval_blocks(dmc, bio);
 		if (queued) {
 			if (unlikely(queued < 0))
-				bio_endio(bio, bio->bi_size, -EIO);
+				flashcache_bio_endio(bio, -EIO);
 			spin_unlock_irq(&dmc->cache_spin_lock);
 			return DM_MAPIO_SUBMITTED;
 		}
@@ -1450,7 +1495,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 			 */
 			DMERR("flashcache: Write (miss) failed ! Can't allocate memory for cache IO, block %lu", 
 			      cacheblk->dbn);
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 			spin_lock_irq(&dmc->cache_spin_lock);
 			dmc->cached_blocks--;
 			cacheblk->cache_state &= ~VALID;
@@ -1461,7 +1506,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 				VERIFY(cacheblk->nr_queued > 0);
 				cacheblk->nr_queued--;
 				bio = pjob->bio;
-				bio_endio(bio, bio->bi_size, -EIO);
+				flashcache_bio_endio(bio, -EIO);
 				flashcache_free_pending_job(pjob);
 			}
 			VERIFY(cacheblk->nr_queued == 0);
@@ -1486,7 +1531,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	queued = flashcache_inval_blocks(dmc, bio);
 	if (queued) {
 		if (unlikely(queued < 0))
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		return DM_MAPIO_SUBMITTED;
 	}
@@ -1496,6 +1541,10 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	bio->bi_bdev = dmc->disk_dev->bdev;
 	return DM_MAPIO_REMAPPED;
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
+#define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
+#endif
 
 /*
  * Decide the mapping and perform necessary cache operations for a bio request.
@@ -1527,7 +1576,7 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		if (queued) {
 			if (unlikely(queued < 0))
-				bio_endio(bio, bio->bi_size, -EIO);
+				flashcache_bio_endio(bio, -EIO);
 			return DM_MAPIO_SUBMITTED;
 		} else {
 			/* Forward to source device */
@@ -1622,7 +1671,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 			VERIFY(cacheblk->nr_queued > 0);
 			cacheblk->nr_queued--;
 			bio = pending_job->bio;
-			bio_endio(bio, bio->bi_size, -EIO);
+			flashcache_bio_endio(bio, -EIO);
 			flashcache_free_pending_job(pending_job);
 		}
 		VERIFY(cacheblk->nr_queued == 0);
@@ -1635,8 +1684,14 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK_SYNC;
 		atomic_inc(&dmc->nr_jobs);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			    flashcache_kcopyd_callback_sync, job);
+#else
+		dm_kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
+			       (dm_kcopyd_notify_fn)flashcache_kcopyd_callback_sync, 
+			       (void *)job);
+#endif
 	}
 }
 
@@ -1877,9 +1932,13 @@ flashcache_nc_pid_expiry_locked(struct cache_c *dmc)
  * non-cacheable.
  */
 int 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 flashcache_ioctl(struct dm_target *ti, struct inode *inode,
 		 struct file *filp, unsigned int cmd,
 		 unsigned long arg)
+#else
+flashcache_ioctl(struct dm_target *ti, unsigned int cmd, unsigned long arg)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
 	struct block_device *bdev = dmc->disk_dev->bdev;
@@ -1909,7 +1968,11 @@ flashcache_ioctl(struct dm_target *ti, struct inode *inode,
 		fake_file.f_path.dentry = &fake_dentry;
 #endif
 		fake_dentry.d_inode = bdev->bd_inode;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 		return blkdev_driver_ioctl(bdev->bd_inode, &fake_file, bdev->bd_disk, cmd, arg);
+#else
+		return __blkdev_driver_ioctl(dmc->disk_dev->bdev, dmc->disk_dev->mode, cmd, arg);
+#endif
 	}
 }
 
