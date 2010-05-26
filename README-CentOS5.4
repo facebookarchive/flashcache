@@ -1,0 +1,58 @@
+Vadim T (Percona) wrote this doc on building Flashcache for CentOS5.4.
+
+Hi,
+
+It took some efforts for make binary on plain CentOS 5.4 with kernel
+2.6.18-164.15.1.el5,
+so I want to share my notes (If you do not mind I'd like to add it to
+INSTALL.CentOS54 or like that)
+
+CentOS 5.4 x86_64
+base document is:
+http://wiki.centos.org/HowTos/I_need_the_Kernel_Source
+
+1. we need to get full source code of kernel.
+
+so:
+
+* as root:
+
+yum install rpm-build redhat-rpm-config unifdef
+
+As an ordinary user, not root, create a directory tree based on ~/
+rpmbuild:
+[user@host]$ cd
+[user@host]$ mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+[user@host]$ echo '%_topdir %(echo $HOME)/rpmbuild' > .rpmmacros
+
+* install kernel src.rpm
+rpm -i http://mirror.centos.org/centos/5/updates/SRPMS/kernel-2.6.18-164.15....
+2>&1 | grep -v mockb
+cd ~/rpmbuild/SPECS
+rpmbuild -bp --target=`uname -m` kernel-2.6.spec 2> prep-err.log | tee prep-out.log
+
+The kernel source tree will now be found in the directory ~/rpmbuild/
+BUILD/.
+
+next commands to prepare kernel:
+
+cd ~/rpmbuild/BUILD/kernel-2.6.18/linux-2.6.18.x86_64
+make oldconfig
+make prepare
+make modules_prepare
+
+Now kernel source code which can be used to build flashcache is there:
+~/rpmbuild/BUILD/kernel-2.6.18/linux-2.6.18.x86_64
+
+to build flashcache you use:
+make KERNEL_TREE=/home/vadim/rpmbuild/BUILD/kernel-2.6.18/
+linux-2.6.18.x86_64/
+
+but you also need to make next changes to
+file: src/Makefile
+replace EXTRA_CFLAGS line by:
+EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I$(KERNEL_TREE)/include/
+linux  -I./
+
+Thanks,
+Vadim 
