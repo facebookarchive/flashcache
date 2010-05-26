@@ -277,7 +277,18 @@ struct pending_job {
 };
 #endif /* __KERNEL__ */
 
-/* The cache superblock is read by Flashcache utilities */
+/* States of a cache block */
+#define INVALID			0x0001
+#define VALID			0x0002	/* Valid */
+#define DISKREADINPROG		0x0004	/* Read from disk in progress */
+#define DISKWRITEINPROG		0x0008	/* Write to disk in progress */
+#define CACHEREADINPROG		0x0010	/* Read from cache in progress */
+#define CACHEWRITEINPROG	0x0020	/* Write to cache in progress */
+#define DIRTY			0x0040	/* Dirty, needs writeback to disk */
+
+#define BLOCK_IO_INPROG	(DISKREADINPROG | DISKWRITEINPROG | CACHEREADINPROG | CACHEWRITEINPROG)
+
+/* Cache metadata is read by Flashcache utilities */
 #ifndef __KERNEL__
 typedef u_int64_t sector_t;
 #endif
@@ -300,7 +311,6 @@ struct flash_superblock {
 	u_int32_t cache_version;
 };
 
-#ifdef __KERNEL__
 /* 
  * We do metadata updates only when a block trasitions from DIRTY -> CLEAN
  * or from CLEAN -> DIRTY. Consequently, on an unclean shutdown, we only
@@ -317,14 +327,16 @@ struct flash_cacheblock {
 	u_int32_t	cache_state; /* INVALID | VALID | DIRTY */
 };
 
+#define MD_BLOCKS_PER_SECTOR		(512 / (sizeof(struct flash_cacheblock)))
+#define INDEX_TO_MD_SECTOR(INDEX)	((INDEX) / MD_BLOCKS_PER_SECTOR)
+#define INDEX_TO_MD_SECTOR_OFFSET(INDEX)	((INDEX) % MD_BLOCKS_PER_SECTOR)
+
+#ifdef __KERNEL__
+
 /* Cache persistence */
 #define CACHE_RELOAD		1
 #define CACHE_CREATE		2
 #define CACHE_FORCECREATE	3
-
-#define MD_BLOCKS_PER_SECTOR		(512 / (sizeof(struct flash_cacheblock)))
-#define INDEX_TO_MD_SECTOR(INDEX)	((INDEX) / MD_BLOCKS_PER_SECTOR)
-#define INDEX_TO_MD_SECTOR_OFFSET(INDEX)	((INDEX) % MD_BLOCKS_PER_SECTOR)
 
 /* 
  * We have one of these for *every* cache metadata sector, to keep track

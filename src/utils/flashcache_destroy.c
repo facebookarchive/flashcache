@@ -38,6 +38,8 @@
 #include <linux/types.h>
 #include <flashcache.h>
 
+int force = 0;
+
 void
 usage(char *pname)
 {
@@ -54,12 +56,23 @@ main(int argc, char **argv)
 	char *disk_devname, *ssd_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t cache_devsize, disk_devsize;
-	sector_t block_size = 0, cache_size = 0;
+	sector_t block_size = 0;
+	u_int64_t cache_size = 0;
+	int dirty_blocks = 0;
 	
 	pname = argv[0];
-	if (argc < 2) 
+	while ((c = getopt(argc, argv, "f")) != -1) {
+		switch (c) {
+		case 'f':
+			force = 1;
+                        break;
+		case '?':
+			usage(pname);
+		}
+	}
+	if (optind == argc) 
 		usage(pname);
-	ssd_devname = argv[1];
+	ssd_devname = argv[optind++];
 	cache_fd = open(ssd_devname, O_RDWR);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -76,6 +89,38 @@ main(int argc, char **argv)
 	      sb->cache_sb_state == CACHE_MD_STATE_UNSTABLE)) {
 		fprintf(stderr, "%s: No valid Flashcache found on %s\n", 
 			pname, ssd_devname);
+		exit(1);
+	}
+	cache_size = sb->size;
+	while (cache_size > 0 && dirty_blocks == 0) {
+		struct flash_cacheblock *next_ptr;
+		int j, slots_read;
+		
+		if (cache_size < MD_BLOCKS_PER_SECTOR)
+			slots_read = cache_size;
+		else
+			slots_read = MD_BLOCKS_PER_SECTOR;			
+		if (read(cache_fd, buf, 512) < 0) {
+			fprintf(stderr, "Cannot read Flashcache metadata %s\n", ssd_devname);
+			exit(1);		
+		}
+		next_ptr = (struct flash_cacheblock *)buf;
+		for (j = 0 ; j < slots_read ; j++) {
+			if (next_ptr->cache_state & DIRTY) {
+				dirty_blocks++;
+				break;
+			}				
+			next_ptr++;
+		}
+		cache_size -= slots_read;
+	}
+	if (dirty_blocks && !force) {
+		fprintf(stderr, "%s: DIRTY BLOCKS EXIST ON %s, ABORTING CACHE DESTROY\n", 
+			pname, ssd_devname);
+		fprintf(stderr, "%s: Use -f (force) to destroy cache with DIRTY blocks, BUT YOU WILL LOSE DATA GUARANTEED\n", 
+			pname);
+		fprintf(stderr, "%s: To clean the DIRTY blocks, flashcache_load, then do_sync until all dirty blocks are cleaned\n", 
+			pname);
 		exit(1);
 	}
 	fprintf(stderr, "%s: Destroying Flashcache found on %s. Any data will be lost !!\n", 
