@@ -119,6 +119,11 @@ stripe unit to 16KB will result in XFS sending down 16KB multiple IOs.
 This sets the stripe unit to 16KB and the stripe width to 
 640KB (16KB * 40).
 
+Note : For the 16KB blocksize to work well with XFS, it is necessary
+to align the volume to start at a 16KB boundary. There are some 
+alignment issues with XFS/LVM and flashcache. If using LVM, use the
+4KB cache blocksize.
+
 FlashCache Sysctls :
 ==================
 These sysctls will apply to all cache devices on the node.

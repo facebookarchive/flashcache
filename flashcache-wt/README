@@ -1,0 +1,51 @@
+flashcache-wt is a simple, non-persistent write through flashcache.
+
+It is a separate code base from flashcache (which is write back only).
+
+Notes :
+-----
+1) flashcache-wt is non persistent, which means that on a cache remove 
+(or a reboot), you will lose the cache entirely. Since the cache is write 
+through, this will not result in any data loss.
+2) Right now, I have only built and tested flashcache-wt on 2.6.20 and
+2.6.18. But I do plan to port it forward to newer releases.
+3) The printk/format warnings will be eliminated shortly.
+
+Building flashcache-wt :
+----------------------
+opsdev209.snc1.facebook.com> make KERNEL_TREE=<Base of kernel tree>
+
+Creating a flashcache-wt volume :
+-------------------------------
+flashcache_wt_create : Create a new flashcache-wt volume.
+
+flashcache_wt_create [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+
+Very similar to flashcache_create.
+
+Removing a flashcache-wt volume :
+----------------------------
+Use dmsetup remove to remove a flashcache-wt volume.
+
+Example:
+dmsetup remove cachedev
+
+Cache Stats :
+===========
+Use 'dmsetup status' for cache statistics.
+
+'dmsetup table' also dumps a number of cache related statistics.
+
+Examples :
+dmsetup status cachedev
+dmsetup table cachedev
+
+Cache Blocksize Selection
+-------------------------
+4KB cache blocks are suitable for the vast majority of the cases.
+
+Also see the flashcache-sa-guide for more discussion on this.
+
+
+
+

@@ -1,3 +1,7 @@
+Update : Added the flashcache-wt directory, which contains a
+(separate) module for a write through flashcache. For more 
+details, look at flashcache-wt/README.
+
 Building Flashcache :
 -------------------
 Update : Vadim Tkachenko (with help from Mohan), ported 
