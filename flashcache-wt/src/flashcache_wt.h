@@ -22,6 +22,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ****************************************************************************/
 
+/* Like ASSERT() but always compiled in */
+
+#define VERIFY(x) do { \
+	if (unlikely(!(x))) { \
+		dump_stack(); \
+		panic("VERIFY: assertion (%s) failed at %s (%d)\n", \
+		      #x,  __FILE__ , __LINE__);		    \
+	} \
+} while(0)
+
 #define DMC_DEBUG 0
 #define DMC_DEBUG_LITE 0
 
@@ -73,6 +83,10 @@ struct cache_c {
 	struct cacheblock	*cache;	/* Hash table for cache blocks */
 	u_int8_t 		*cache_state;
 	u_int32_t		*set_lru_next;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	struct dm_io_client *io_client; /* Client memory pool*/
+#endif
 	
 	sector_t size;			/* Cache size */
 	unsigned int assoc;		/* Cache associativity */
@@ -109,11 +123,28 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	struct io_region disk;
 	struct io_region cache;
+#else
+	struct dm_io_region disk;
+	struct dm_io_region cache;
+#endif
 	int    index;
 	int rw;
 	int error;
 };
 
 #define FLASHCACHE_WT_MIN_JOBS 1024
+
+/* DM async IO mempool sizing */
+#define FLASHCACHE_ASYNC_SIZE 1024
+
+/* Number of pages for I/O */
+#define FLASHCACHE_COPY_PAGES (1024)
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
+#else
+#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))
+#endif

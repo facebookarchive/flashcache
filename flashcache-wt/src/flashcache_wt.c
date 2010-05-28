@@ -34,13 +34,22 @@
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/pagemap.h>
-#include <linux/verify.h>
 #include <linux/random.h>
 #include <linux/version.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
+#else
+#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#include "dm.h"
+#endif
+#include <linux/dm-io.h>
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#endif
+
 #include "flashcache_wt.h"
 
 static struct workqueue_struct *_kcached_wq;
@@ -61,6 +70,32 @@ static DEFINE_SPINLOCK(_job_lock);
 
 static LIST_HEAD(_complete_jobs);
 static LIST_HEAD(_io_jobs);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+static int dm_io_async_bvec(unsigned int num_regions, 
+			    struct dm_io_region *where, int rw, 
+			    struct bio_vec *bvec, io_notify_fn fn, 
+			    void *context)
+{
+	struct kcached_job *job = (struct kcached_job *)context;
+	struct cache_c *dmc = job->dmc;
+	struct dm_io_request iorq;
+
+#if 0
+	/* XXX - Why hint SYNCIO ? */
+	iorq.bi_rw = (rw | (1 << BIO_RW_SYNCIO));
+#else
+	iorq.bi_rw = rw;
+#endif
+	iorq.mem.type = DM_IO_BVEC;
+	iorq.mem.ptr.bvec = bvec;
+	iorq.notify.fn = fn;
+	iorq.notify.context = context;
+	iorq.client = dmc->io_client;
+
+	return dm_io(&iorq, num_regions, where, NULL);
+}
+#endif
 
 static u_int64_t
 flashcache_wt_compute_checksum(struct bio *bio)
@@ -117,10 +152,17 @@ flashcache_wt_validate_checksum(struct kcached_job *job)
 static int 
 jobs_init(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	_job_cache = kmem_cache_create("kcached-jobs",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL, NULL);
+#else
+	_job_cache = kmem_cache_create("kcached-jobs",
+	                               sizeof(struct kcached_job),
+	                               __alignof__(struct kcached_job),
+	                               0, NULL);
+#endif
 	if (!_job_cache)
 		return -ENOMEM;
 
@@ -206,9 +248,9 @@ flashcache_wt_io_callback(unsigned long error, void *context)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (error || invalid) {
 			if (invalid)
-				DMERR("flashcache_wt_io_callback: cache fill invalidation, sector %llu, size %u",
+				DMERR("flashcache_wt_io_callback: cache fill invalidation, sector %lu, size %u",
 				      bio->bi_sector, bio->bi_size);
-			bio_endio(bio, bio->bi_size, error);
+			flashcache_bio_endio(bio, error);
 			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 			dmc->cache_state[job->index] = INVALID;
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
@@ -231,7 +273,7 @@ flashcache_wt_io_callback(unsigned long error, void *context)
 		    (flashcache_wt_validate_checksum(job) == 0)) {
 			/* Complete the current IO successfully */
 
-			bio_endio(bio, bio->bi_size, 0);
+			flashcache_bio_endio(bio, 0);
 			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 			dmc->cache_state[job->index] = VALID;
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
@@ -244,7 +286,7 @@ flashcache_wt_io_callback(unsigned long error, void *context)
 		return;
 	} else {
 		VERIFY(job->rw == WRITECACHE);
-		bio_endio(bio, bio->bi_size, 0);
+		flashcache_bio_endio(bio, 0);
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		VERIFY((dmc->cache_state[job->index] == INPROG) ||
 		       (dmc->cache_state[job->index] == INPROG_INVALID));
@@ -333,13 +375,15 @@ do_work(struct work_struct *work)
 static int 
 kcached_init(struct cache_c *dmc)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	int r;
 
-	r = dm_io_get(FLASHCACHE_WT_ASYNC_SIZE);
+	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
 	if (r) {
-		DMERR("kcached_init: Could not resize dm io pool");
+		DMERR("flashcache_kcached_init: Could not resize dm io pool");
 		return r;
 	}
+#endif
 	init_waitqueue_head(&dmc->destroyq);
 	atomic_set(&dmc->nr_jobs, 0);
 	return 0;
@@ -350,7 +394,9 @@ kcached_client_destroy(struct cache_c *dmc)
 {
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
-	dm_io_put(FLASHCACHE_WT_ASYNC_SIZE);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+	dm_io_put(FLASHCACHE_ASYNC_SIZE);
+#endif
 }
 
 /*
@@ -446,7 +492,9 @@ static int
 cache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 {
 	sector_t dbn = bio->bi_sector;
+#if DMC_DEBUG
 	int io_size = to_sector(bio->bi_size);
+#endif
 	unsigned long set_number = hash_block(dmc, dbn);
 	int invalid = -1, oldest_clean = -1;
 	int start_index;
@@ -665,7 +713,7 @@ cache_invalidate_block_set(struct cache_c *dmc, int set, sector_t io_start, sect
 			} else if (dmc->cache_state[i] >= INPROG) {
 				(*inprog_inval)++;
 				dmc->cache_state[i] = INPROG_INVALID;
-				DMERR("cache_invalidate_block_set: sector %llu, size %llu, rw %d",
+				DMERR("cache_invalidate_block_set: sector %lu, size %lu, rw %d",
 				      io_start, io_end - io_start, rw);
 				DPRINTK_LITE("Cache invalidate: Block %llu INPROG",
 					     start_dbn);
@@ -747,6 +795,10 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 			 flashcache_wt_io_callback, job);
 	return DM_MAPIO_SUBMITTED;
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
+#define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
+#endif
 
 /*
  * Decide the mapping and perform necessary cache operations for a bio request.
@@ -833,6 +885,15 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad2;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
+	if (IS_ERR(dmc->io_client)) {
+		r = PTR_ERR(dmc->io_client);
+		ti->error = "Failed to create io client\n";
+		goto bad2;
+	}
+#endif
+
 	r = kcached_init(dmc);
 	if (r) {
 		ti->error = "Failed to initialize kcached";
@@ -857,7 +918,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	/* dmc->size is specified in sectors here, and converted to blocks below */
 	if (argc >= 4) {
-		if (sscanf(argv[3], "%llu", &dmc->size) != 1) {
+		if (sscanf(argv[3], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache-wt: Invalid cache size";
 			r = -EINVAL;
 			goto bad4;
@@ -892,7 +953,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	data_size = dmc->size * dmc->block_size;
 	if (data_size > dev_size) {
 		DMERR("Requested cache size exeeds the cache device's capacity" \
-		      "(%llu>%llu)",
+		      "(%lu>%lu)",
   		      data_size, dev_size);
 		ti->error = "flashcache-wt: Invalid cache size";
 		r = -EINVAL;
@@ -903,8 +964,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->consecutive_shift = ffs(consecutive_blocks) - 1;
 
 	order = dmc->size * sizeof(struct cacheblock);
-	DMINFO("Allocate %lluKB (%uB per) mem for %llu-entry cache" \
-	       "(capacity:%lluMB, associativity:%u, block size:%u " \
+	DMINFO("Allocate %luKB (%ldB per) mem for %lu-entry cache" \
+	       "(capacity:%luMB, associativity:%u, block size:%u " \
 	       "sectors(%uKB))",
 	       order >> 10, sizeof(struct cacheblock), dmc->size,
 	       data_size >> (20-SECTOR_SHIFT), dmc->assoc, dmc->block_size,
@@ -967,6 +1028,9 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 bad4:
 	kcached_client_destroy(dmc);
 bad3:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dm_io_client_destroy(dmc->io_client);
+#endif
 	dm_put_device(ti, dmc->cache_dev);
 bad2:
 	dm_put_device(ti, dmc->disk_dev);
@@ -1007,13 +1071,16 @@ cache_dtr(struct dm_target *ti)
 		else 
 			cache_pct = 0;
 		DMINFO("conf:\n"\
-		       "\tcapacity(%lluM), associativity(%u), block size(%uK)\n" \
-		       "\ttotal blocks(%u), cached blocks(%lu), cache percent(%d)\n",
+		       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
+		       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
 		       dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT), 
 		       dmc->size, dmc->cached_blocks, cache_pct);
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	dm_io_client_destroy(dmc->io_client);
+#endif
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_state);
 	vfree((void *)dmc->set_lru_next);
@@ -1057,15 +1124,15 @@ flashcache_wt_status_table(struct cache_c *dmc, status_type_t type,
 	else 
 		cache_pct = 0;
 	DMEMIT("conf:\n"\
-	       "\tcapacity(%uM), associativity(%u), block size(%uK)\n" \
-	       "\ttotal blocks(%u), cached blocks(%lu), cache percent(%d)\n",
+	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
+	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, cache_pct);
 	DMEMIT(" Size Hist: ");
 	for (i = 1 ; i <= 32 ; i++) {
 		if (size_hist[i] > 0)
-			DMEMIT("%d:%ld ", i*512, size_hist[i]);
+			DMEMIT("%d:%llu ", i*512, size_hist[i]);
 	}
 }
 
@@ -1145,10 +1212,14 @@ flashcache_wt_init(void)
 void 
 flashcache_wt_exit(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	int r = dm_unregister_target(&cache_target);
 
 	if (r < 0)
 		DMERR("cache: unregister failed %d", r);
+#else
+	dm_unregister_target(&cache_target);
+#endif
 	jobs_exit();
 	destroy_workqueue(_kcached_wq);
 }

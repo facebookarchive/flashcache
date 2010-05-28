@@ -7,9 +7,8 @@ Notes :
 1) flashcache-wt is non persistent, which means that on a cache remove 
 (or a reboot), you will lose the cache entirely. Since the cache is write 
 through, this will not result in any data loss.
-2) Right now, I have only built and tested flashcache-wt on 2.6.20 and
-2.6.18. But I do plan to port it forward to newer releases.
-3) The printk/format warnings will be eliminated shortly.
+2) Built on 2.6.18, .20, .27-.32 successfully. Tested on .18, .20, .27 
+and .32 successfully.
 
 Building flashcache-wt :
 ----------------------
