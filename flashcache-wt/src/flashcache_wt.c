@@ -418,10 +418,7 @@ find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 	 * we sweep through the set looking for next blocks
 	 * to recycle. This approximates to FIFO (modulo 
 	 * for blocks written through).
-	 * XXX - If this turns out to be inadequate, we can 
-	 * keep timestamps per cache block that allow us to 
-	 * pick off the least recently used entry and approximate
-	 * LRU on a per set basis accurately.
+	 * XXX - Add LRU ala (wb) flashcache.
 	 */
 	i = dmc->set_lru_next[set];
 	while (slots_searched < dmc->assoc) {
@@ -887,7 +884,6 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	/* 
 	 * Convert size (in sectors) to blocks.
 	 * Then round size (in blocks now) down to a multiple of associativity 
-	 * XXX - Use modulo arithmetic in the hash function instead of shifting !
 	 */
 	dmc->size /= dmc->block_size;
 	dmc->size = (dmc->size / dmc->assoc) * dmc->assoc;
@@ -903,13 +899,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad4;
 	}
 
-#if 0
-	/* XXX why is this needed ? assoc === consecutive blocks always */
-	consecutive_blocks = dmc->assoc < CONSECUTIVE_BLOCKS ?
-	                     dmc->assoc : CONSECUTIVE_BLOCKS;
-#else
 	consecutive_blocks = dmc->assoc;
-#endif
 	dmc->consecutive_shift = ffs(consecutive_blocks) - 1;
 
 	order = dmc->size * sizeof(struct cacheblock);
