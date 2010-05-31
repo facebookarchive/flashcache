@@ -28,4 +28,7 @@ distro supporting DKMS:
 
 Done!
 
+Note that this won't install the utils you need to create the flashcache devices, you still
+have to build and install those separately.
+
  - Graeme Humphries <graeme@sudo.ca>
