@@ -23,8 +23,8 @@ distro supporting DKMS:
 
 3. Build and install the modules using DKMS:
 
-  sudo dkms install -m flashcache -v 0.1
-  sudo dkms install -m flashcache-wt -v 0.1
+  sudo dkms build -m flashcache -v 0.1 && sudo dkms install -m flashcache -v 0.1
+  sudo dkms build -m flashcache-wt -v 0.1 && sudo dkms install -m flashcache-wt -v 0.1
 
 Done!
 
