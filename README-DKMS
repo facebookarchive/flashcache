@@ -1,0 +1,31 @@
+DKMS Module Howto:
+------------------
+
+A number of modern distros (Ubuntu, Fedora and others) can use DKMS to help sensibly manage building
+and maintaining additional third party kernel modules.
+
+http://en.wikipedia.org/wiki/Dynamic_Kernel_Module_Support
+
+I've added some simple DKMS configs for flashcache to make building and managing it a little less painful.
+The dirt quick way to get this working on Ubuntu 10.04 is as follows, and should be similar for any other
+distro supporting DKMS:
+
+1. Symlink the flashcache and/or flashcache-wt source directories into /usr/src so DKMS can find them:
+
+  cd /usr/src
+  sudo ln -s /path/to/flashcache/src flashcache-0.1
+  sudo ln -s /path/to/flashcache-wt/src flashcache-0.1
+
+2. Add them to DKMS:
+
+  sudo dkms add -m flashcache -v 0.1
+  sudo dkms add -m flashcache-wt -v 0.1
+
+3. Build and install the modules using DKMS:
+
+  sudo dkms install -m flashcache -v 0.1
+  sudo dkms install -m flashcache-wt -v 0.1
+
+Done!
+
+ - Graeme Humphries <graeme@sudo.ca>
