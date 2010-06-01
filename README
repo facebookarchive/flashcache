@@ -1,3 +1,5 @@
+License : Everything in flashcache components released under GPL v2.
+
 Update : Added the flashcache-wt directory, which contains a
 (separate) module for a write through flashcache. For more 
 details, look at flashcache-wt/README.
