@@ -100,29 +100,7 @@ Cache Blocksize selection :
 Cache blocksize selection is critical for good cache utilization and
 performance. 
 
-For the majority of filesystems and applications, a 4KB blocksize 
-works well and is the right choice.
-
-Some applications use a larger blocksize. In such cases, 
-*with O_DIRECT and XFS*, it is possible (and beneficial) to use
-a larger flashcache blocksize (to match the application blocksize).
-Note that the blocksize must be a power of 2.
-
-An example, MySQL/InnoDB uses 16KB blocksize by default. In this cases, 
-*with O_DIRECT and XFS*, we can use a 16KB flashcache blocksize. 
-If we do this, it is critical to tune XFS's stripe unit (su) to 16KB, 
-and set the stripe width accordingly (man 8 mkfs.xfs). Setting the 
-stripe unit to 16KB will result in XFS sending down 16KB multiple IOs.
-
-# mkfs.xfs -f -d su=16384,sw=40 /dev/cciss/c0d1p4
-
-This sets the stripe unit to 16KB and the stripe width to 
-640KB (16KB * 40).
-
-Note : For the 16KB blocksize to work well with XFS, it is necessary
-to align the volume to start at a 16KB boundary. There are some 
-alignment issues with XFS/LVM and flashcache. If using LVM, use the
-4KB cache blocksize.
+A 4KB cache blocksize for the vast majority of workloads (and filesystems).
 
 FlashCache Sysctls :
 ==================
