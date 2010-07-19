@@ -94,7 +94,7 @@
 /* Default cache parameters */
 #define DEFAULT_CACHE_SIZE	65536
 #define DEFAULT_CACHE_ASSOC	512
-#define DEFAULT_BLOCK_SIZE	32	/* 16 KB */
+#define DEFAULT_BLOCK_SIZE	8	/* 4 KB */
 #define CONSECUTIVE_BLOCKS	512
 
 #define FLASHCACHE_FIFO		0
