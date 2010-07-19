@@ -983,7 +983,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 * stop cleanings inside flashcache_dirty_writeback() because we could
 	 * have started a device remove after tested this here.
 	 */
-	if (atomic_read(&dmc->fast_remove_in_prog) || sysctl_flashcache_stop_sync)
+	if (atomic_read(&dmc->fast_remove_in_prog))
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (unlikely(sysctl_flashcache_error_inject & WRITES_LIST_ALLOC_FAIL)) {
