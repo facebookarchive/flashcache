@@ -100,17 +100,6 @@
 #define FLASHCACHE_FIFO		0
 #define FLASHCACHE_LRU		1
 
-/* States of a cache block */
-#define INVALID			0x0001
-#define VALID			0x0002	/* Valid */
-#define DISKREADINPROG		0x0004	/* Read from disk in progress */
-#define DISKWRITEINPROG		0x0008	/* Write to disk in progress */
-#define CACHEREADINPROG		0x0010	/* Read from cache in progress */
-#define CACHEWRITEINPROG	0x0020	/* Write to cache in progress */
-#define DIRTY			0x0040	/* Dirty, needs writeback to disk */
-
-#define BLOCK_IO_INPROG	(DISKREADINPROG | DISKWRITEINPROG | CACHEREADINPROG | CACHEWRITEINPROG)
-
 /*
  * The LRU pointers are maintained as set-relative offsets, instead of 
  * pointers. This enables us to store the LRU pointers per cacheblock

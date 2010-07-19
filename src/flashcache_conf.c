@@ -1523,9 +1523,11 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		dirty_pct = 0;
 	}
 	DMEMIT("conf:\n"						\
+	       "\tssd dev (%s), disk dev (%s)\n"                        \
 	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n" \
 	       "\tdirty blocks(%d), dirty percent(%d)\n",
+	       dmc->cache_devname, dmc->disk_devname,
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, 
@@ -1578,33 +1580,35 @@ static struct target_type flashcache_target = {
 static void
 flashcache_sync_for_remove(struct cache_c *dmc)
 {
-	cancel_delayed_work(&dmc->delayed_clean);
-	flush_scheduled_work();
-	if (!sysctl_flashcache_fast_remove) {
+	do {
+		cancel_delayed_work(&dmc->delayed_clean);
+		flush_scheduled_work();
+		if (!sysctl_flashcache_fast_remove) {
+			/* 
+			 * Kick off cache cleaning. client_destroy will wait for cleanings
+			 * to finish.
+			 */
+			printk(KERN_ALERT "Cleaning %d blocks please WAIT", dmc->nr_dirty);
+			/* Tune up the cleaning parameters to clean very aggressively */
+			dmc->max_clean_ios_total = 20;
+			dmc->max_clean_ios_set = 10;
+			flashcache_sync_all(dmc);
+		} else {
+			/* Needed to abort any in-progress cleanings, leave blocks DIRTY */
+			atomic_set(&dmc->fast_remove_in_prog, 1);
+			printk(KERN_ALERT "Fast flashcache remove Skipping cleaning of %d blocks", 
+			       dmc->nr_dirty);
+		}
 		/* 
-		 * Kick off cache cleaning. client_destroy will wait for cleanings
-		 * to finish.
+		 * We've prevented new cleanings from starting (for the fast remove case)
+		 * and we will wait for all in progress cleanings to exit.
+		 * Wait a few seconds for everything to quiesce before writing out the 
+		 * cache metadata.
 		 */
-		printk(KERN_ALERT "Cleaning %d blocks please WAIT", dmc->nr_dirty);
-		/* Tune up the cleaning parameters to clean very aggressively */
-		dmc->max_clean_ios_total = 20;
-		dmc->max_clean_ios_set = 10;
-		flashcache_sync_all(dmc);
-	} else {
-		/* Needed to abort any in-progress cleanings, leave blocks DIRTY */
-		atomic_set(&dmc->fast_remove_in_prog, 1);
-		printk(KERN_ALERT "Fast flashcache remove Skipping cleaning of %d blocks", 
-		       dmc->nr_dirty);
-	}
-	/* 
-	 * We've prevented new cleanings from starting (for the fast remove case)
-	 * and we will wait for all in progress cleanings to exit.
-	 * Wait a few seconds for everything to quiesce before writing out the 
-	 * cache metadata.
-	 */
-	msleep(FLASHCACHE_SYNC_REMOVE_DELAY);
-	/* Wait for all the dirty blocks to get written out, and any other IOs */
-	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
+		msleep(FLASHCACHE_SYNC_REMOVE_DELAY);
+		/* Wait for all the dirty blocks to get written out, and any other IOs */
+		wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
+	} while (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0);
 }
 
 static int 
