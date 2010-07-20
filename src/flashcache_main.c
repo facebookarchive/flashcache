@@ -246,6 +246,24 @@ flashcache_io_callback(unsigned long error, void *context)
 	}
 }
 
+static void
+flashcache_free_pending_jobs(struct cache_c *dmc, struct cacheblock *cacheblk, 
+			     int error)
+{
+	struct pending_job *pending_job;
+
+	VERIFY(spin_is_locked(&dmc->cache_spin_lock));
+	while (cacheblk->head) {
+		pending_job = cacheblk->head;
+		cacheblk->head = pending_job->next;
+		VERIFY(cacheblk->nr_queued > 0);
+		cacheblk->nr_queued--;
+		flashcache_bio_endio(pending_job->bio, error);
+		flashcache_free_pending_job(pending_job);
+	}
+	VERIFY(cacheblk->nr_queued == 0);
+}
+
 /* 
  * Common error handling for everything.
  * 1) If the block isn't dirty, invalidate it.
@@ -257,8 +275,6 @@ flashcache_do_pending_error(struct kcached_job *job)
 {
 	struct cache_c *dmc = job->dmc;
 	unsigned long flags;
-	struct pending_job *pending_job;
-	struct bio *bio;
 	struct cacheblock *cacheblk = &dmc->cache[job->index];
 
 	DMERR("flashcache_do_pending_error: error %d block %lu action %d", 
@@ -272,16 +288,7 @@ flashcache_do_pending_error(struct kcached_job *job)
 		cacheblk->cache_state &= ~VALID;
 		cacheblk->cache_state |= INVALID;
 	}
-	while (cacheblk->head) {
-		pending_job = cacheblk->head;
-		cacheblk->head = pending_job->next;
-		VERIFY(cacheblk->nr_queued > 0);
-		cacheblk->nr_queued--;
-		bio = pending_job->bio;
-		flashcache_bio_endio(bio, job->error);
-		flashcache_free_pending_job(pending_job);
-	}
-	VERIFY(cacheblk->nr_queued == 0);
+	flashcache_free_pending_jobs(dmc, cacheblk, job->error);
 	cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	flashcache_free_cache_job(job);
@@ -896,8 +903,6 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 	struct kcached_job *job;
 	unsigned long flags;
 	struct cacheblock *cacheblk = &dmc->cache[index];
-	struct pending_job *pending_job;
-	struct bio* bio;
 	int device_removal = 0;
 	
 	DPRINTK("flashcache_dirty_writeback: Index %d", index);
@@ -929,16 +934,7 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_sets[index / dmc->assoc].clean_inprog--;
 		dmc->clean_inprog--;
-		while (cacheblk->head) {
-			pending_job = cacheblk->head;
-			cacheblk->head = pending_job->next;
-			VERIFY(cacheblk->nr_queued > 0);
-			cacheblk->nr_queued--;
-			bio = pending_job->bio;
-			flashcache_bio_endio(bio, -EIO);
-			flashcache_free_pending_job(pending_job);
-		}
-		VERIFY(cacheblk->nr_queued == 0);
+		flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (device_removal == 0)
@@ -1080,7 +1076,6 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 {
 	struct kcached_job *job;
 	struct cacheblock *cacheblk = &dmc->cache[index];
-	struct pending_job *pending_job;
 
 	job = new_kcached_job(dmc, bio, index);
 	if (unlikely(sysctl_flashcache_error_inject & READ_MISS_JOB_ALLOC_FAIL)) {
@@ -1102,16 +1097,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		dmc->cached_blocks--;
 		cacheblk->cache_state &= ~VALID;
 		cacheblk->cache_state |= INVALID;
-		while (cacheblk->head) {
-			pending_job = cacheblk->head;
-			cacheblk->head = pending_job->next;
-			VERIFY(cacheblk->nr_queued > 0);
-			cacheblk->nr_queued--;
-			bio = pending_job->bio;
-			flashcache_bio_endio(bio, -EIO);
-			flashcache_free_pending_job(pending_job);
-		}
-		VERIFY(cacheblk->nr_queued == 0);
+		flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		spin_unlock_irq(&dmc->cache_spin_lock);
 	} else {
@@ -1175,16 +1161,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 					      cacheblk->dbn);
 					flashcache_bio_endio(bio, -EIO);
 					spin_lock_irq(&dmc->cache_spin_lock);
-					while (cacheblk->head) {
-						pjob = cacheblk->head;
-						cacheblk->head = pjob->next;
-						VERIFY(cacheblk->nr_queued > 0);
-						cacheblk->nr_queued--;
-						bio = pjob->bio;
-						flashcache_bio_endio(bio, -EIO);
-						flashcache_free_pending_job(pjob);
-					}
-					VERIFY(cacheblk->nr_queued == 0);
+					flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 					cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 					spin_unlock_irq(&dmc->cache_spin_lock);
 				} else {
@@ -1425,16 +1402,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 					      cacheblk->dbn);
 					flashcache_bio_endio(bio, -EIO);
 					spin_lock_irq(&dmc->cache_spin_lock);
-					while (cacheblk->head) {
-						pjob = cacheblk->head;
-						cacheblk->head = pjob->next;
-						VERIFY(cacheblk->nr_queued > 0);
-						cacheblk->nr_queued--;
-						bio = pjob->bio;
-						flashcache_bio_endio(bio, -EIO);
-						flashcache_free_pending_job(pjob);
-					}
-					VERIFY(cacheblk->nr_queued == 0);
+					flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 					cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 					spin_unlock_irq(&dmc->cache_spin_lock);
 				} else {
@@ -1499,16 +1467,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 			dmc->cached_blocks--;
 			cacheblk->cache_state &= ~VALID;
 			cacheblk->cache_state |= INVALID;
-			while (cacheblk->head) {
-				pjob = cacheblk->head;
-				cacheblk->head = pjob->next;
-				VERIFY(cacheblk->nr_queued > 0);
-				cacheblk->nr_queued--;
-				bio = pjob->bio;
-				flashcache_bio_endio(bio, -EIO);
-				flashcache_free_pending_job(pjob);
-			}
-			VERIFY(cacheblk->nr_queued == 0);
+			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 			cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 			spin_unlock_irq(&dmc->cache_spin_lock);
 		} else {
@@ -1637,8 +1596,6 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 	struct kcached_job *job;
 	unsigned long flags;
 	struct cacheblock *cacheblk = &dmc->cache[index];
-	struct pending_job *pending_job;
-	struct bio* bio;
 	int device_removal = 0;
 	
 	DPRINTK("flashcache_dirty_writeback_sync: Index %d", index);
@@ -1664,16 +1621,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_sets[index / dmc->assoc].clean_inprog--;
 		dmc->clean_inprog--;
-		while (cacheblk->head) {
-			pending_job = cacheblk->head;
-			cacheblk->head = pending_job->next;
-			VERIFY(cacheblk->nr_queued > 0);
-			cacheblk->nr_queued--;
-			bio = pending_job->bio;
-			flashcache_bio_endio(bio, -EIO);
-			flashcache_free_pending_job(pending_job);
-		}
-		VERIFY(cacheblk->nr_queued == 0);
+		flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (device_removal == 0)
