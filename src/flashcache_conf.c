@@ -541,23 +541,24 @@ flashcache_md_store(struct cache_c *dmc)
 	struct dm_io_region where;
 #endif
 	int i, j;
-	int next_sector;
 	int num_valid = 0, num_dirty = 0;
 	int error;
 	int write_errors = 0;
+	int sectors_written = 0, sectors_expected = 0; /* debug */
+	int slots_written = 0; /* How many cache slots did we fill in this MD io block ? */
 
-	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(512);
+	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
 	if (!meta_data_cacheblock) {
 		DMERR("flashcache_md_store: Unable to allocate memory");
 		DMERR("flashcache_md_store: Could not write out cache metadata !");
 		return 1;
 	}	
+
+	where.bdev = dmc->cache_dev->bdev;
+	where.sector = 1;
+	slots_written = 0;
 	next_ptr = meta_data_cacheblock;
 	j = MD_BLOCKS_PER_SECTOR;
-	next_sector = 1;
-	where.bdev = dmc->cache_dev->bdev;
-	where.count = 1;
-
 	for (i = 0 ; i < dmc->size ; i++) {
 		if (dmc->cache[i].cache_state & VALID)
 			num_valid++;
@@ -570,29 +571,44 @@ flashcache_md_store(struct cache_c *dmc)
 		next_ptr->cache_state = dmc->cache[i].cache_state & 
 			(INVALID | VALID | DIRTY);
 		next_ptr++;
+		slots_written++;
 		j--;
 		if (j == 0) {
 			/* 
-			 * Filled the sector, write it out 
+			 * Filled the sector, goto the next sector.
 			 */
-			where.sector = next_sector++;
+			if (slots_written == MD_BLOCKS_PER_SECTOR * METADATA_IO_BLOCKSIZE_SECT) {
+				/*
+				 * Wrote out an entire metadata IO block, write the block to the ssd.
+				 */
+				where.count = slots_written / MD_BLOCKS_PER_SECTOR;
+				slots_written = 0;
+				sectors_written += where.count;	/* debug */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-			error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+				error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
 #else
-			error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
 #endif
-			if (error) {
-				write_errors++;
-				DMERR("flashcache_md_store: Could not write out cache metadata sector %lu error %d !",
-				      where.sector, error);
+				if (error) {
+					write_errors++;
+					DMERR("flashcache_md_store: Could not write out cache metadata sector %lu error %d !",
+					      where.sector, error);
+				}
+				where.sector += where.count;	/* Advance offset */
 			}
+			/* Move next slot pointer into next sector */
+			next_ptr = (struct flash_cacheblock *)
+				((caddr_t)meta_data_cacheblock + ((slots_written / MD_BLOCKS_PER_SECTOR) * 512));
 			j = MD_BLOCKS_PER_SECTOR;
-			next_ptr = meta_data_cacheblock;
 		}
 	}
 	if (next_ptr != meta_data_cacheblock) {
-		/* Write the remaining last sector out */
-		where.sector = next_sector++;
+		/* Write the remaining last sectors out */
+		VERIFY(slots_written > 0);
+		where.count = slots_written / MD_BLOCKS_PER_SECTOR;
+		if (slots_written % MD_BLOCKS_PER_SECTOR)
+			where.count++;
+		sectors_written += where.count;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
 #else
@@ -604,8 +620,24 @@ flashcache_md_store(struct cache_c *dmc)
 				      where.sector, error);
 		}
 	}
+	/* Debug Tests */
+	sectors_expected = dmc->size / MD_BLOCKS_PER_SECTOR;
+	if (dmc->size % MD_BLOCKS_PER_SECTOR)
+		sectors_expected++;
+	if (sectors_expected != sectors_written) {
+		printk("flashcache_md_store" "Sector Mismatch ! sectors_expected=%d, sectors_written=%d\n",
+		       sectors_expected, sectors_written);
+		panic("flashcache_md_store: sector mismatch\n");
+	}
 
-	header = (struct flash_superblock *)meta_data_cacheblock;
+	vfree((void *)meta_data_cacheblock);
+
+	header = (struct flash_superblock *)vmalloc(512);
+	if (!header) {
+		DMERR("flashcache_md_store: Unable to allocate memory");
+		DMERR("flashcache_md_store: Could not write out cache metadata !");
+		return 1;
+	}	
 	
 	/* Write the header out last */
 	if (write_errors == 0) {
@@ -630,10 +662,11 @@ flashcache_md_store(struct cache_c *dmc)
 	        header->assoc);
 
 	where.sector = 0;
+	where.count = 1;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-	error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
+	error = flashcache_dm_io_sync_vm(&where, WRITE, header);
 #else
-	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
+	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
 #endif
 	if (error) {
 		write_errors++;
@@ -641,7 +674,7 @@ flashcache_md_store(struct cache_c *dmc)
 		      where.sector, error);
 	}
 
-	vfree((void *)meta_data_cacheblock);
+	vfree((void *)header);
 
 	if (write_errors == 0)
 		DMINFO("Cache metadata saved to disk");
@@ -669,9 +702,10 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	struct dm_io_region where;
 #endif
 	int i, j, error;
-	int next_sector;
 	sector_t cache_size, dev_size;
 	sector_t order;
+	int sectors_written = 0, sectors_expected = 0; /* debug */
+	int slots_written = 0; /* How many cache slots did we fill in this MD io block ? */
 	
 	header = (struct flash_superblock *)vmalloc(512);
 	if (!header) {
@@ -692,7 +726,6 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		      where.sector, error);
 		return 1;
 	}
-
 	if (!force &&
 	    ((header->cache_sb_state == CACHE_MD_STATE_DIRTY) ||
 	     (header->cache_sb_state == CACHE_MD_STATE_CLEAN) ||
@@ -701,7 +734,6 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		DMERR("flashcache_md_create: Existing Cache Detected, use force to re-create");
 		return 1;
 	}
-
 	/* Compute the size of the metadata, including header. 
 	   Note dmc->size is in raw sectors */
 	dmc->md_sectors = INDEX_TO_MD_SECTOR(dmc->size / dmc->block_size) + 1 + 1;
@@ -710,9 +742,7 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	dmc->size = (dmc->size / dmc->assoc) * dmc->assoc;	
 	/* Recompute since dmc->size was possibly trunc'ed down */
 	dmc->md_sectors = INDEX_TO_MD_SECTOR(dmc->size) + 1 + 1;
-
 	DMINFO("flashcache_md_create: md_sectors = %d\n", dmc->md_sectors);
-
 	dev_size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	cache_size = dmc->md_sectors + (dmc->size * dmc->block_size);
 	if (cache_size > dev_size) {
@@ -722,7 +752,6 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		vfree((void *)header);
 		return 1;
 	}
-
 	order = dmc->size * sizeof(struct cacheblock);
 	DMINFO("Allocate %luKB (%luB per) mem for %lu-entry cache" \
 	       "(capacity:%luMB, associativity:%u, block size:%u " \
@@ -736,7 +765,6 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		DMERR("flashcache_md_create: Unable to allocate cache md");
 		return 1;
 	}
-	
 	/* Initialize the cache structs */
 	for (i = 0; i < dmc->size ; i++) {
 		dmc->cache[i].dbn = 0;
@@ -747,12 +775,16 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		dmc->cache[i].head = NULL;
 		dmc->cache[i].nr_queued = 0;
 	}
-
-	meta_data_cacheblock = (struct flash_cacheblock *)header;
+	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
+	if (!meta_data_cacheblock) {
+		DMERR("flashcache_md_store: Unable to allocate memory");
+		DMERR("flashcache_md_store: Could not write out cache metadata !");
+		return 1;
+	}	
+	where.sector = 1;
+	slots_written = 0;
 	next_ptr = meta_data_cacheblock;
 	j = MD_BLOCKS_PER_SECTOR;
-	next_sector = 1;
-
 	for (i = 0 ; i < dmc->size ; i++) {
 		next_ptr->dbn = dmc->cache[i].dbn;
 #ifdef FLASHCACHE_DO_CHECKSUMS
@@ -761,33 +793,49 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		next_ptr->cache_state = dmc->cache[i].cache_state & 
 			(INVALID | VALID | DIRTY);
 		next_ptr++;
+		slots_written++;
 		j--;
 		if (j == 0) {
 			/* 
-			 * Filled the sector, write it out 
+			 * Filled the sector, goto the next sector.
 			 */
-			where.sector = next_sector++;
+			if (slots_written == MD_BLOCKS_PER_SECTOR * METADATA_IO_BLOCKSIZE_SECT) {
+				/*
+				 * Wrote out an entire metadata IO block, write the block to the ssd.
+				 */
+				where.count = slots_written / MD_BLOCKS_PER_SECTOR;
+				slots_written = 0;
+				sectors_written += where.count;	/* debug */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-			error = flashcache_dm_io_sync_vm(&where, WRITE, 
-							 meta_data_cacheblock);
+				error = flashcache_dm_io_sync_vm(&where, WRITE, 
+								 meta_data_cacheblock);
 #else
-			error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, 
-							 meta_data_cacheblock);
+				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, 
+								 meta_data_cacheblock);
 #endif
-			if (error) {
-				vfree((void *)header);
-				vfree(dmc->cache);
-				DMERR("flashcache_md_create: Could not write  cache metadata sector %lu error %d !",
-				      where.sector, error);
-				return 1;				
+				if (error) {
+					vfree((void *)header);
+					vfree((void *)meta_data_cacheblock);
+					vfree(dmc->cache);
+					DMERR("flashcache_md_create: Could not write  cache metadata sector %lu error %d !",
+					      where.sector, error);
+					return 1;
+				}
+				where.sector += where.count;	/* Advance offset */
 			}
+			/* Move next slot pointer into next sector */
+			next_ptr = (struct flash_cacheblock *)
+				((caddr_t)meta_data_cacheblock + ((slots_written / MD_BLOCKS_PER_SECTOR) * 512));
 			j = MD_BLOCKS_PER_SECTOR;
-			next_ptr = meta_data_cacheblock;
 		}
 	}
 	if (next_ptr != meta_data_cacheblock) {
-		/* Write the remaining last sector out */
-		where.sector = next_sector++;
+		/* Write the remaining last sectors out */
+		VERIFY(slots_written > 0);
+		where.count = slots_written / MD_BLOCKS_PER_SECTOR;
+		if (slots_written % MD_BLOCKS_PER_SECTOR)
+			where.count++;
+		sectors_written += where.count;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, WRITE, meta_data_cacheblock);
 #else
@@ -795,13 +843,23 @@ flashcache_md_create(struct cache_c *dmc, int force)
 #endif
 		if (error) {
 			vfree((void *)header);
+			vfree((void *)meta_data_cacheblock);
 			vfree(dmc->cache);
 			DMERR("flashcache_md_create: Could not write  cache metadata sector %lu error %d !",
 			      where.sector, error);
 			return 1;		
 		}
 	}
-
+	/* Debug Tests */
+	sectors_expected = dmc->size / MD_BLOCKS_PER_SECTOR;
+	if (dmc->size % MD_BLOCKS_PER_SECTOR)
+		sectors_expected++;
+	if (sectors_expected != sectors_written) {
+		printk("flashcache_md_create" "Sector Mismatch ! sectors_expected=%d, sectors_written=%d\n",
+		       sectors_expected, sectors_written);
+		panic("flashcache_md_create: sector mismatch\n");
+	}
+	vfree((void *)meta_data_cacheblock);
 	/* Write the header */
 	header->cache_sb_state = CACHE_MD_STATE_DIRTY;
 	header->block_size = dmc->block_size;
@@ -812,8 +870,8 @@ flashcache_md_create(struct cache_c *dmc, int force)
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	header->cache_version = FLASHCACHE_VERSION;
-
 	where.sector = 0;
+	where.count = 1;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, WRITE, header);
 #else
@@ -826,9 +884,7 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		      where.sector, error);
 		return 1;		
 	}
-
 	vfree((void *)header);
-
 	return 0;
 }
 
@@ -843,7 +899,6 @@ flashcache_md_load(struct cache_c *dmc)
 	struct dm_io_region where;
 #endif
 	int i, j;
-	int next_sector;
 	int size, slots_read;
 	int clean_shutdown;
 	int dirty_loaded = 0;
@@ -851,6 +906,7 @@ flashcache_md_load(struct cache_c *dmc)
 	int num_valid = 0;
 	int error;
 	void *block;
+	int sectors_read = 0, sectors_expected = 0;	/* Debug */
 	
 	header = (struct flash_superblock *)vmalloc(512);
 	if (!header) {
@@ -871,12 +927,10 @@ flashcache_md_load(struct cache_c *dmc)
 		      where.sector, error);
 		return 1;
 	}
-
 	DPRINTK("Loaded cache conf: block size(%u), cache size(%llu), " \
 	        "associativity(%u)",
 	        header->block_size, header->size,
 	        header->assoc);
-
 	if (!((header->cache_sb_state == CACHE_MD_STATE_DIRTY) ||
 	      (header->cache_sb_state == CACHE_MD_STATE_CLEAN) ||
 	      (header->cache_sb_state == CACHE_MD_STATE_FASTCLEAN))) {
@@ -884,7 +938,6 @@ flashcache_md_load(struct cache_c *dmc)
 		DMERR("flashcache_md_load: Corrupt Cache Superblock");
 		return 1;
 	}
-
 	if (header->cache_sb_state == CACHE_MD_STATE_DIRTY) {
 		DMINFO("Unclean Shutdown Detected");
 		printk(KERN_ALERT "Only DIRTY blocks exist in cache");
@@ -898,7 +951,6 @@ flashcache_md_load(struct cache_c *dmc)
 		printk(KERN_ALERT "Both CLEAN and DIRTY blocks exist in cache");
 		clean_shutdown = 1;
 	}
-
 	dmc->block_size = header->block_size;
 	dmc->block_shift = ffs(dmc->block_size) - 1;
 	dmc->block_mask = dmc->block_size - 1;
@@ -906,11 +958,8 @@ flashcache_md_load(struct cache_c *dmc)
 	dmc->assoc = header->assoc;
 	dmc->consecutive_shift = ffs(dmc->assoc) - 1;
 	dmc->md_sectors = INDEX_TO_MD_SECTOR(dmc->size) + 1 + 1;
-
 	DMINFO("flashcache_md_load: md_sectors = %d\n", dmc->md_sectors);
-
 	data_size = dmc->size * dmc->block_size;
-	
 	order = dmc->size * sizeof(struct cacheblock);
 	DMINFO("Allocate %luKB (%ldB per) mem for %lu-entry cache" \
 	       "(capacity:%luMB, associativity:%u, block size:%u " \
@@ -925,7 +974,6 @@ flashcache_md_load(struct cache_c *dmc)
 		vfree((void *)header);
 		return 1;
 	}
-
 	block = vmalloc(dmc->block_size * 512);
 	if (!block) {
 		DMERR("load_metadata: Unable to allocate memory");
@@ -935,21 +983,28 @@ flashcache_md_load(struct cache_c *dmc)
 			      where.sector);
 			return 1;
 	}
-	
 	/* 
 	 * Read 1 sector of the metadata at a time and load up the
 	 * incore metadata struct.
 	 */
-	meta_data_cacheblock = (struct flash_cacheblock *)header;
-	next_sector = 1;
+	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
+	if (!meta_data_cacheblock) {
+		vfree((void *)header);
+		vfree(dmc->cache);
+		vfree(block);
+		DMERR("flashcache_md_load: Unable to allocate memory");
+		return 1;
+	}
+	where.sector = 1;
 	size = dmc->size;
 	i = 0;
 	while (size > 0) {
-		if (size > MD_BLOCKS_PER_SECTOR)
-			slots_read = MD_BLOCKS_PER_SECTOR;
-		else 
-			slots_read = size;
-		where.sector = next_sector++;
+		slots_read = min(size, (int)MD_BLOCKS_PER_SECTOR * METADATA_IO_BLOCKSIZE_SECT);
+		if (slots_read % MD_BLOCKS_PER_SECTOR)
+			where.count = 1 + (slots_read / MD_BLOCKS_PER_SECTOR);
+		else
+			where.count = slots_read / MD_BLOCKS_PER_SECTOR;
+		sectors_read += where.count;	/* Debug */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(&where, READ, meta_data_cacheblock);
 #else
@@ -959,12 +1014,19 @@ flashcache_md_load(struct cache_c *dmc)
 			vfree((void *)header);
 			vfree(dmc->cache);
 			vfree(block);
+			vfree((void *)meta_data_cacheblock);
 			DMERR("flashcache_md_load: Could not read cache metadata sector %lu error %d !",
 			      where.sector, error);
 			return 1;
 		}
+		where.sector += where.count;
 		next_ptr = meta_data_cacheblock;
 		for (j = 0 ; j < slots_read ; j++) {
+			if ((j % MD_BLOCKS_PER_SECTOR) == 0) {
+				/* Move onto next sector */
+				next_ptr = (struct flash_cacheblock *)
+					((caddr_t)meta_data_cacheblock + 512 * (j / MD_BLOCKS_PER_SECTOR));
+			}
 			dmc->cache[i].nr_queued = 0;
 			dmc->cache[i].head = NULL;
 			/* 
@@ -988,6 +1050,7 @@ flashcache_md_load(struct cache_c *dmc)
 						vfree((void *)header);
 						vfree(dmc->cache);
 						vfree(block);
+						vfree((void *)meta_data_cacheblock);
 						DMERR("flashcache_md_load: Could not read cache block sector %lu error %d !",
 						      dmc->cache[i].dbn, error);
 						return 1;				
@@ -1006,7 +1069,16 @@ flashcache_md_load(struct cache_c *dmc)
 		}
 		size -= slots_read;
 	}
-
+	/* Debug Tests */
+	sectors_expected = dmc->size / MD_BLOCKS_PER_SECTOR;
+	if (dmc->size % MD_BLOCKS_PER_SECTOR)
+		sectors_expected++;
+	if (sectors_expected != sectors_read) {
+		printk("flashcache_md_load" "Sector Mismatch ! sectors_expected=%d, sectors_read=%d\n",
+		       sectors_expected, sectors_read);
+		panic("flashcache_md_load: sector mismatch\n");
+	}
+	vfree((void *)meta_data_cacheblock);
 	/* Before we finish loading, we need to dirty the suprtblock and 
 	   write it out */
 	header->size = dmc->size;
@@ -1018,8 +1090,8 @@ flashcache_md_load(struct cache_c *dmc)
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	header->cache_version = FLASHCACHE_VERSION;
-
 	where.sector = 0;
+	where.count = 1;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(&where, WRITE, header);
 #else
@@ -1033,13 +1105,10 @@ flashcache_md_load(struct cache_c *dmc)
 		      where.sector, error);
 		return 1;		
 	}
-
 	vfree((void *)header);
 	vfree(block);
-
 	DMINFO("flashcache_md_load: Cache metadata loaded from disk with %d valid %d DIRTY blocks", 
 	       num_valid, dirty_loaded);
-
 	return 0;
 }
 
