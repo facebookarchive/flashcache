@@ -1038,7 +1038,6 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		while (lru_rel_index != FLASHCACHE_LRU_NULL && 
 		       ((dmc->cache_sets[set].clean_inprog + nr_writes) < dmc->max_clean_ios_set) &&
 		       ((nr_writes + dmc->clean_inprog) < dmc->max_clean_ios_total) &&
-		       dmc->cache_sets[set].clean_inprog < dmc->max_clean_ios_set &&
 		       nr_writes < to_clean) {
 			cacheblk = &dmc->cache[lru_rel_index + start_index];			
 			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
