@@ -1432,6 +1432,9 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->set_limit_reached = dmc->total_limit_reached = 0;
 	dmc->front_merge = dmc->back_merge = 0;
 	dmc->pid_drops = dmc->pid_adds = dmc->pid_dels = dmc->expiry = 0;
+	dmc->uncached_reads = dmc->uncached_writes = 0;
+	dmc->disk_reads = dmc->disk_writes = 0;
+	dmc->ssd_reads = dmc->ssd_writes = 0;
 }
 
 /*
@@ -1558,6 +1561,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
+	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
@@ -1567,6 +1572,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
+	       dmc->uncached_reads, dmc->uncached_writes,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #else
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
@@ -1577,6 +1584,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
+	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
@@ -1585,6 +1594,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
+	       dmc->uncached_reads, dmc->uncached_writes,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #endif
 }
@@ -1757,6 +1768,7 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 			write_hit_pct = 0;
 			dirty_write_hit_pct = 0;
 		}
+		seq_printf(seq, "reads=%lu writes=%lu ", dmc->reads, dmc->writes);
 		seq_printf(seq, "read_hits=%lu read_hit_percent=%d write_hits=%lu write_hit_percent=%d ",
 			   dmc->read_hits, read_hit_pct, dmc->write_hits, write_hit_pct);
 		seq_printf(seq, "dirty_write_hits=%lu dirty_write_hit_percent=%d ",
@@ -1771,8 +1783,12 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 			   dmc->md_write_dirty, dmc->md_write_clean);
 		seq_printf(seq, "cleanings=%lu no_room=%lu front_merge=%lu back_merge=%lu ",
 			   dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
+		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu ",
 			   dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
+		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
+			   dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes);
+		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu\n",
+			   dmc->uncached_reads, dmc->uncached_writes);
 
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
@@ -1831,6 +1847,31 @@ flashcache_errors_open(struct inode *inode, struct file *file)
 
 static struct file_operations flashcache_errors_operations = {
 	.open		= flashcache_errors_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int 
+flashcache_iosize_hist_show(struct seq_file *seq, void *v)
+{
+	int i;
+	
+	for (i = 1 ; i <= 32 ; i++) {
+		seq_printf(seq, "%d:%llu ", i*512, size_hist[i]);
+	}
+	seq_printf(seq, "\n");
+	return 0;
+}
+
+static int 
+flashcache_iosize_hist_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, &flashcache_iosize_hist_show, NULL);
+}
+
+static struct file_operations flashcache_iosize_hist_operations = {
+	.open		= flashcache_iosize_hist_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
@@ -1927,6 +1968,9 @@ flashcache_init(void)
 		entry = create_proc_entry("flashcache_errors", 0, NULL);
 		if (entry)
 			entry->proc_fops =  &flashcache_errors_operations;
+		entry = create_proc_entry("flashcache_iosize_hist", 0, NULL);
+		if (entry)
+			entry->proc_fops =  &flashcache_iosize_hist_operations;
 		entry = create_proc_entry("flashcache_pidlists", 0, NULL);
 		if (entry)
 			entry->proc_fops =  &flashcache_pidlists_operations;		
@@ -1959,6 +2003,7 @@ flashcache_exit(void)
 	unregister_sysctl_table(flashcache_table_header);
 	remove_proc_entry("flashcache_stats", NULL);
 	remove_proc_entry("flashcache_errors", NULL);
+	remove_proc_entry("flashcache_iosize_hist", NULL);
 	remove_proc_entry("flashcache_pidlists", NULL);
 #endif
 	kfree(flashcache_control);

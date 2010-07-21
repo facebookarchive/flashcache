@@ -200,6 +200,9 @@ struct cache_c {
 	unsigned long pid_dels;
 	unsigned long expiry;
 	unsigned long front_merge, back_merge;	/* Write Merging */
+	unsigned long uncached_reads, uncached_writes;
+	unsigned long disk_reads, disk_writes;
+	unsigned long ssd_reads, ssd_writes;
 
 	unsigned long clean_set_calls;
 	unsigned long clean_set_less_dirty;

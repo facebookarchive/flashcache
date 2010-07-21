@@ -382,6 +382,7 @@ flashcache_do_io(struct kcached_job *job)
 	flashcache_store_checksum(job);
 	job->dmc->checksum_store++;
 #endif
+	job->dmc->ssd_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_io_callback, job);
 	flashcache_unplug_device(job->dmc->cache_dev->bdev);
@@ -681,6 +682,7 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	where.bdev = dmc->cache_dev->bdev;
 	where.count = 1;
 	where.sector = 1 + INDEX_TO_MD_SECTOR(orig_job->index);
+	dmc->ssd_writes++;
 	dm_io_async_bvec(1, &where, WRITE,
 			 &orig_job->md_io_bvec,
 			 flashcache_md_write_callback, orig_job);
@@ -943,6 +945,8 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK;
 		atomic_inc(&dmc->nr_jobs);
+		dmc->ssd_reads++;
+		dmc->disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			    flashcache_kcopyd_callback, job);
@@ -1102,6 +1106,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 	} else {
 		job->action = READDISK; /* Fetch data from the source device */
 		atomic_inc(&dmc->nr_jobs);
+		dmc->disk_reads++;
 		dm_io_async_bvec(1, &job->disk, READ,
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_io_callback, job);
@@ -1166,6 +1171,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 				} else {
 					job->action = READCACHE; /* Fetch data from cache */
 					atomic_inc(&dmc->nr_jobs);
+					dmc->ssd_reads++;
 					dm_io_async_bvec(1, &job->cache, READ,
 							 bio->bi_io_vec + bio->bi_idx,
 							 flashcache_io_callback, job);
@@ -1408,6 +1414,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 					job->action = WRITECACHE; /* Write data to the source device */
 					DPRINTK("Queue job for %llu", bio->bi_sector);
 					atomic_inc(&dmc->nr_jobs);
+					dmc->ssd_writes++;
 					dm_io_async_bvec(1, &job->cache, WRITE, 
 							 bio->bi_io_vec + bio->bi_idx,
 							 flashcache_io_callback, job);
@@ -1472,6 +1479,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 		} else {
 			job->action = WRITECACHE; 
 			atomic_inc(&dmc->nr_jobs);
+			dmc->ssd_writes++;
 			dm_io_async_bvec(1, &job->cache, WRITE, 
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
@@ -1629,6 +1637,8 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK_SYNC;
 		atomic_inc(&dmc->nr_jobs);
+		dmc->ssd_reads++;
+		dmc->disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			    flashcache_kcopyd_callback_sync, job);
