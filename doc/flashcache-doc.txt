@@ -158,6 +158,8 @@ In spite of the limitations, we think the ability to mark Direct IOs
 issued by a pid will be valuable to prevent backups from wiping out
 the cache.
 
+(For a more detailed discussion about caching controls, see the SA Guide).
+
 Futures and Features :
 ====================
 Cache Mirroring :

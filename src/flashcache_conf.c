@@ -72,10 +72,11 @@ int sysctl_flashcache_dirty_thresh = DIRTY_THRESH_DEF;
 int sysctl_flashcache_debug = 0;
 int sysctl_max_clean_ios_total = 4;
 int sysctl_max_clean_ios_set = 2;
-int sysctl_flashcache_max_nc_pids = 100;
-int sysctl_nc_pid_expiry_check = 60;
-int sysctl_nc_pid_do_expiry = 0;
+int sysctl_flashcache_max_pids = 100;
+int sysctl_pid_expiry_check = 60;
+int sysctl_pid_do_expiry = 0;
 int sysctl_flashcache_fast_remove = 0;
+int sysctl_cache_all = 1;
 
 struct cache_c *cache_list_head = NULL;
 struct work_struct _kcached_wq;
@@ -336,25 +337,25 @@ static ctl_table flashcache_table[] = {
 		.strategy	= &sysctl_intvec,
 	},
 	{
-		.ctl_name	= FLASHCACHE_WB_DO_NC_EXPIRY,
-		.procname	= "do_nc_pid_expiry",
-		.data		= &sysctl_nc_pid_do_expiry,
+		.ctl_name	= FLASHCACHE_WB_DO_EXPIRY,
+		.procname	= "do_pid_expiry",
+		.data		= &sysctl_pid_do_expiry,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
 	{
-		.ctl_name	= FLASHCACHE_WB_MAX_NC_PIDS,
-		.procname	= "max_nc_pids",
-		.data		= &sysctl_flashcache_max_nc_pids,
+		.ctl_name	= FLASHCACHE_WB_MAX_PIDS,
+		.procname	= "max_pids",
+		.data		= &sysctl_flashcache_max_pids,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
 	{
-		.ctl_name	= FLASHCACHE_WB_MAX_NC_PID_EXPIRY,
-		.procname	= "nc_pid_expiry_secs",
-		.data		= &sysctl_nc_pid_expiry_check,
+		.ctl_name	= FLASHCACHE_WB_MAX_PID_EXPIRY,
+		.procname	= "pid_expiry_secs",
+		.data		= &sysctl_pid_expiry_check,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
@@ -399,6 +400,14 @@ static ctl_table flashcache_table[] = {
 		.ctl_name	= FLASHCACHE_WB_DO_FAST_REMOVE,
 		.procname	= "fast_remove",
 		.data		= &sysctl_flashcache_fast_remove,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= FLASHCACHE_WB_CACHE_ALL,
+		.procname	= "cache_all",
+		.data		= &sysctl_cache_all,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
@@ -1367,8 +1376,12 @@ init:
 	INIT_DELAYED_WORK(&dmc->delayed_clean, flashcache_clean_all_sets);
 #endif
 
-	dmc->nc_pid_list_head = dmc->nc_pid_list_tail = NULL;
-	dmc->num_nc_pids = 0;
+	dmc->whitelist_head = NULL;
+	dmc->whitelist_tail = NULL;
+	dmc->blacklist_head = NULL;
+	dmc->blacklist_tail = NULL;
+	dmc->num_whitelist_pids = 0;
+	dmc->num_blacklist_pids = 0;
 
 	return 0;
 
@@ -1418,7 +1431,7 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->clean_set_fails = dmc->clean_set_ios = 0;
 	dmc->set_limit_reached = dmc->total_limit_reached = 0;
 	dmc->front_merge = dmc->back_merge = 0;
-	dmc->nc_pid_drops = dmc->nc_pid_adds = dmc->nc_pid_dels = dmc->nc_expiry = 0;
+	dmc->pid_drops = dmc->pid_adds = dmc->pid_dels = dmc->expiry = 0;
 }
 
 /*
@@ -1492,8 +1505,10 @@ flashcache_dtr(struct dm_target *ti)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 	dm_io_client_destroy(dmc->io_client);
 #endif
-	flashcache_del_nc_all(dmc);
-	VERIFY(dmc->num_nc_pids == 0);
+	flashcache_del_all_pids(dmc, FLASHCACHE_WHITELIST, 1);
+	flashcache_del_all_pids(dmc, FLASHCACHE_BLACKLIST, 1);
+	VERIFY(dmc->num_whitelist_pids == 0);
+	VERIFY(dmc->num_blacklist_pids == 0);
 	dm_put_device(ti, dmc->disk_dev);
 	dm_put_device(ti, dmc->cache_dev);
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
@@ -1543,7 +1558,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
-	       "\tnc_pid_adds(%lu), nc_pid_dels(%lu), nc_pid_drops(%lu) nc_expiry(%lu)",
+	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
 	       dmc->dirty_write_hits, dirty_write_hit_pct,
@@ -1552,7 +1567,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
-	       dmc->nc_pid_adds, dmc->nc_pid_dels, dmc->nc_pid_drops, dmc->nc_expiry);
+	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #else
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
 	       "\twrite hits(%lu) write hit percent(%d)\n" 		\
@@ -1562,7 +1577,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
-	       "\tnc_pid_adds(%lu), nc_pid_dels(%lu), nc_pid_drops(%lu) nc_expiry(%lu)",
+	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
 	       dmc->dirty_write_hits, dirty_write_hit_pct,
@@ -1570,7 +1585,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
-	       dmc->nc_pid_adds, dmc->nc_pid_dels, dmc->nc_pid_drops, dmc->nc_expiry);
+	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #endif
 }
 
@@ -1756,8 +1771,8 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 			   dmc->md_write_dirty, dmc->md_write_clean);
 		seq_printf(seq, "cleanings=%lu no_room=%lu front_merge=%lu back_merge=%lu ",
 			   dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge);
-		seq_printf(seq, "nc_pid_adds=%lu nc_pid_dels=%lu nc_pid_drops=%lu nc_expiry=%lu\n",
-			   dmc->nc_pid_adds, dmc->nc_pid_dels, dmc->nc_pid_drops, dmc->nc_expiry);
+		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
+			   dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
@@ -1821,6 +1836,56 @@ static struct file_operations flashcache_errors_operations = {
 	.release	= single_release,
 };
 
+static int 
+flashcache_pidlists_show(struct seq_file *seq, void *v)
+{
+	struct cache_c *dmc;
+	struct flashcache_cachectl_pid *pid_list;
+ 	unsigned long flags;
+
+	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
+			       FLASHCACHE_UPDATE_LIST,
+			       flashcache_wait_schedule, 
+			       TASK_UNINTERRUPTIBLE);
+	for (dmc = cache_list_head ; 
+	     dmc != NULL ; 
+	     dmc = dmc->next_cache) {
+		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+		seq_printf(seq, "Blacklist: ");
+		pid_list = dmc->blacklist_head;
+		while (pid_list != NULL) {
+			seq_printf(seq, "%u ", pid_list->pid);
+			pid_list = pid_list->next;
+		}
+		seq_printf(seq, "\n");
+		seq_printf(seq, "Whitelist: ");
+		pid_list = dmc->whitelist_head;
+		while (pid_list != NULL) {
+			seq_printf(seq, "%u ", pid_list->pid);
+			pid_list = pid_list->next;
+		}
+		seq_printf(seq, "\n");
+		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	}
+	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
+	smp_mb__after_clear_bit();
+	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);		
+	return 0;
+}
+
+static int 
+flashcache_pidlists_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, &flashcache_pidlists_show, NULL);
+}
+
+static struct file_operations flashcache_pidlists_operations = {
+	.open		= flashcache_pidlists_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /*
  * Initiate a cache target.
  */
@@ -1861,7 +1926,10 @@ flashcache_init(void)
 			entry->proc_fops =  &flashcache_stats_operations;
 		entry = create_proc_entry("flashcache_errors", 0, NULL);
 		if (entry)
-			entry->proc_fops =  &flashcache_errors_operations;		
+			entry->proc_fops =  &flashcache_errors_operations;
+		entry = create_proc_entry("flashcache_pidlists", 0, NULL);
+		if (entry)
+			entry->proc_fops =  &flashcache_pidlists_operations;		
 	}
 #endif
 	flashcache_control = (struct flashcache_control_s *)
@@ -1891,6 +1959,7 @@ flashcache_exit(void)
 	unregister_sysctl_table(flashcache_table_header);
 	remove_proc_entry("flashcache_stats", NULL);
 	remove_proc_entry("flashcache_errors", NULL);
+	remove_proc_entry("flashcache_pidlists", NULL);
 #endif
 	kfree(flashcache_control);
 }

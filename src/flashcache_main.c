@@ -37,6 +37,7 @@
 #include <linux/hardirq.h>
 #include <linux/sysctl.h>
 #include <linux/version.h>
+#include <linux/pid.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
@@ -74,20 +75,23 @@ static int flashcache_write(struct cache_c *dmc, struct bio* bio);
 static int flashcache_inval_blocks(struct cache_c *dmc, struct bio *bio);
 static void flashcache_dirty_writeback(struct cache_c *dmc, int index);
 void flashcache_sync_blocks(struct cache_c *dmc);
-
-static int flashcache_find_nc_pid_locked(struct cache_c *dmc, pid_t pid);
-static void flashcache_del_nc_pid_locked(struct cache_c *dmc, pid_t pid);
-static void flashcache_nc_pid_expiry_locked(struct cache_c *dmc);
+static int flashcache_find_pid_locked(struct cache_c *dmc, pid_t pid, 
+				      int which_list);
+static void flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, 
+				      int which_list);
+static void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
+static int flashcache_uncacheable(struct cache_c *dmc);
 
 extern struct work_struct _kcached_wq;
 extern u_int64_t size_hist[];
 
-extern int sysctl_flashcache_max_nc_pids;
-extern int sysctl_nc_pid_do_expiry;
-extern int sysctl_nc_pid_expiry_check;
+extern int sysctl_flashcache_max_pids;
+extern int sysctl_pid_do_expiry;
+extern int sysctl_pid_expiry_check;
 extern int sysctl_flashcache_error_inject;
 extern int sysctl_flashcache_stop_sync;
 extern int sysctl_flashcache_reclaim_policy;
+extern int sysctl_cache_all;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
 static int dm_io_async_bvec(unsigned int num_regions, 
@@ -99,12 +103,7 @@ static int dm_io_async_bvec(unsigned int num_regions,
 	struct cache_c *dmc = job->dmc;
 	struct dm_io_request iorq;
 
-#if 0
-	/* XXX - Why hint SYNCIO ? */
-	iorq.bi_rw = (rw | (1 << BIO_RW_SYNCIO));
-#else
 	iorq.bi_rw = rw;
-#endif
 	iorq.mem.type = DM_IO_BVEC;
 	iorq.mem.ptr.bvec = bvec;
 	iorq.notify.fn = fn;
@@ -1201,7 +1200,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		return DM_MAPIO_SUBMITTED;
 	}
-	if (res == -1 || flashcache_find_nc_pid_locked(dmc, current->pid)) {
+	if (res == -1 || flashcache_uncacheable(dmc)) {
 		/* No room or non-cacheable */
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		DPRINTK("Cache read: Block %llu(%lu):%s",
@@ -1524,12 +1523,11 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
 
 	spin_lock_irq(&dmc->cache_spin_lock);
-	if (unlikely(sysctl_nc_pid_do_expiry && 
-		     (dmc->nc_pid_list_head != NULL)))
-		flashcache_nc_pid_expiry_locked(dmc);
+	if (unlikely(sysctl_pid_do_expiry && 
+		     (dmc->whitelist_head || dmc->blacklist_head)))
+		flashcache_pid_expiry_all_locked(dmc);
 	if ((to_sector(bio->bi_size) != dmc->block_size) ||
-	    (bio_data_dir(bio) == WRITE && 
-	     flashcache_find_nc_pid_locked(dmc, current->pid))) {
+	    (bio_data_dir(bio) == WRITE && flashcache_uncacheable(dmc))) {
 		queued = flashcache_inval_blocks(dmc, bio);
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		if (queued) {
@@ -1723,58 +1721,88 @@ flashcache_sync_all(struct cache_c *dmc)
 	flashcache_sync_blocks(dmc);
 }
 
-static int
-flashcache_find_nc_pid_locked(struct cache_c *dmc, pid_t pid)
-{
-	struct flashcache_non_cacheable_pid *node;
 
-	for (node = dmc->nc_pid_list_head ; node != NULL ; node = node->next) {
-		if (node->pid == pid)
+static int
+flashcache_find_pid_locked(struct cache_c *dmc, pid_t pid, 
+			   int which_list)
+{
+	struct flashcache_cachectl_pid *pid_list;
+	
+	pid_list = ((which_list == FLASHCACHE_WHITELIST) ? 
+		    dmc->whitelist_head : dmc->blacklist_head);
+	for ( ; pid_list != NULL ; pid_list = pid_list->next) {
+		if (pid_list->pid == pid)
 			return 1;
 	}
-	return 0;
+	return 0;	
 }
 
 static void
-flashcache_drop_nc_pids(struct cache_c *dmc)
+flashcache_drop_pids(struct cache_c *dmc, int which_list)
 {
-	while (dmc->num_nc_pids >= sysctl_flashcache_max_nc_pids) {
-		VERIFY(dmc->nc_pid_list_tail != NULL);
-		flashcache_del_nc_pid_locked(dmc, dmc->nc_pid_list_tail->pid);
-		dmc->nc_pid_drops++;
+	if (which_list == FLASHCACHE_WHITELIST) {
+		while (dmc->num_whitelist_pids >= sysctl_flashcache_max_pids) {
+			VERIFY(dmc->whitelist_head != NULL);
+			flashcache_del_pid_locked(dmc, dmc->whitelist_tail->pid,
+						  which_list);
+			dmc->pid_drops++;
+		}
+	} else {
+		while (dmc->num_blacklist_pids >= sysctl_flashcache_max_pids) {
+			VERIFY(dmc->blacklist_head != NULL);
+			flashcache_del_pid_locked(dmc, dmc->blacklist_tail->pid,
+						  which_list);
+			dmc->pid_drops++;
+		}		
 	}
 }
 
 static void
-flashcache_add_nc_pid(struct cache_c *dmc, pid_t pid)
+flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
-	struct flashcache_non_cacheable_pid *new;
-	unsigned long flags;
+	struct flashcache_cachectl_pid *new;
+ 	unsigned long flags;
 
-	new = kmalloc(sizeof(struct flashcache_non_cacheable_pid), 
-		      GFP_KERNEL);
+	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	if (dmc->num_nc_pids > sysctl_flashcache_max_nc_pids)
-		flashcache_drop_nc_pids(dmc);
-	if (flashcache_find_nc_pid_locked(dmc, pid) == 0) {
-		/* Add the new nc pid to the tail */
-		new->prev = dmc->nc_pid_list_tail;
-		if (dmc->nc_pid_list_head == NULL) {
-			VERIFY(dmc->nc_pid_list_tail == NULL);
-			dmc->nc_pid_list_head = new;
+	if (which_list == FLASHCACHE_WHITELIST) {
+		if (dmc->num_whitelist_pids > sysctl_flashcache_max_pids)
+			flashcache_drop_pids(dmc, which_list);
+	} else {
+		if (dmc->num_blacklist_pids > sysctl_flashcache_max_pids)
+			flashcache_drop_pids(dmc, which_list);		
+	}
+	if (flashcache_find_pid_locked(dmc, pid, which_list) == 0) {
+		struct flashcache_cachectl_pid **head, **tail;
+		
+		if (which_list == FLASHCACHE_WHITELIST) {
+			head = &dmc->whitelist_head;
+			tail = &dmc->whitelist_tail;
 		} else {
-			VERIFY(dmc->nc_pid_list_tail != NULL);
-			dmc->nc_pid_list_tail->next = new;
+			head = &dmc->blacklist_head;
+			tail = &dmc->blacklist_tail;
 		}
-		dmc->nc_pid_list_tail = new;
-		dmc->num_nc_pids++;
-		dmc->nc_pid_adds++;
+		/* Add the new pid to the tail */
+		new->prev = *tail;
+		if (*head == NULL) {
+			VERIFY(*tail == NULL);
+			*head = new;
+		} else {
+			VERIFY(*tail != NULL);
+			(*tail)->next = new;
+		}
+		*tail = new;
+		if (which_list == FLASHCACHE_WHITELIST)
+			dmc->num_whitelist_pids++;
+		else
+			dmc->num_blacklist_pids++;
+		dmc->pid_adds++;
 		/* When adding the first entry to list, set expiry check timeout */
-		if (dmc->nc_pid_list_head == new)
-			dmc->nc_pid_expire_check = 
-				jiffies + ((sysctl_nc_pid_expiry_check + 1) * HZ);
+		if (*head == new)
+			dmc->pid_expire_check = 
+				jiffies + ((sysctl_pid_expiry_check + 1) * HZ);
 	} else
 		kfree(new);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
@@ -1782,90 +1810,204 @@ flashcache_add_nc_pid(struct cache_c *dmc, pid_t pid)
 }
 
 static void
-flashcache_del_nc_pid_locked(struct cache_c *dmc, pid_t pid)
+flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, int which_list)
 {
-	struct flashcache_non_cacheable_pid *node;
-
-	for (node = dmc->nc_pid_list_tail ; node != NULL ; node = node->prev) {
-		VERIFY(dmc->num_nc_pids > 0);
+	struct flashcache_cachectl_pid *node;
+	struct flashcache_cachectl_pid **head, **tail;
+	
+	if (which_list == FLASHCACHE_WHITELIST) {
+		head = &dmc->whitelist_head;
+		tail = &dmc->whitelist_tail;
+	} else {
+		head = &dmc->blacklist_head;
+		tail = &dmc->blacklist_tail;
+	}
+	for (node = *tail ; node != NULL ; node = node->prev) {
+		if (which_list == FLASHCACHE_WHITELIST)
+			VERIFY(dmc->num_whitelist_pids > 0);
+		else
+			VERIFY(dmc->num_blacklist_pids > 0);
 		if (node->pid == pid) {
 			if (node->prev == NULL) {
-				dmc->nc_pid_list_head = node->next;
+				*head = node->next;
 				if (node->next)
 					node->next->prev = NULL;
 			} else
 				node->prev->next = node->next;
 			if (node->next == NULL) {
-				dmc->nc_pid_list_tail = node->prev;
+				*tail = node->prev;
 				if (node->prev)
 					node->prev->next = NULL;
 			} else
 				node->next->prev = node->prev;
 			kfree(node);
-			dmc->num_nc_pids--;
+			dmc->pid_dels++;
+			if (which_list == FLASHCACHE_WHITELIST)
+				dmc->num_whitelist_pids--;
+			else
+				dmc->num_blacklist_pids--;
 			return;
 		}
 	}
 }
 
 static void
-flashcache_del_nc_pid(struct cache_c *dmc, pid_t pid)
+flashcache_del_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	flashcache_del_nc_pid_locked(dmc, pid);
-	dmc->nc_pid_dels++;
+	flashcache_del_pid_locked(dmc, pid, which_list);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 }
 
+/*
+ * This removes all "dead" pids. Pids that may have not cleaned up.
+ */
 void
-flashcache_del_nc_all(struct cache_c *dmc)
+flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 {
-	struct flashcache_non_cacheable_pid *node, *next;
+	struct flashcache_cachectl_pid *node, **tail;
 	unsigned long flags;
-
+	struct task_struct *task;
+	
+	if (which_list == FLASHCACHE_WHITELIST)
+		tail = &dmc->whitelist_tail;
+	else
+		tail = &dmc->blacklist_tail;
+	rcu_read_lock();
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	node = dmc->nc_pid_list_head;
+	node = *tail;
 	while (node != NULL) {
-		VERIFY(dmc->num_nc_pids > 0);
-		next = node->next;
-		kfree(node);
-		dmc->num_nc_pids--;
-		node = next;
+		if (force == 0) {
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,24)
+			task = find_task_by_pid_type(PIDTYPE_PID, node->pid);
+#else
+			task = find_task_by_vpid(node->pid);
+#endif
+			/*
+			 * If that task was found, don't remove it !
+			 * This prevents a rogue "delete all" from removing
+			 * every thread from the list.
+			 */
+			if (task) {
+				node = node->prev;
+				continue;
+			}
+		}
+		flashcache_del_pid_locked(dmc, node->pid, which_list);
+		node = *tail;
 	}
-	dmc->nc_pid_list_head = dmc->nc_pid_list_tail = NULL;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	rcu_read_unlock();
 }
 
 static void
-flashcache_nc_pid_expiry_locked(struct cache_c *dmc)
+flashcache_pid_expiry_list_locked(struct cache_c *dmc, int which_list)
 {
-	struct flashcache_non_cacheable_pid *node;
-
-	if (likely(time_before(jiffies, dmc->nc_pid_expire_check)))
-		return;
-	for (node = dmc->nc_pid_list_head ; node != NULL ; node = node->next) {
-		VERIFY(dmc->num_nc_pids > 0);
+	struct flashcache_cachectl_pid **head, **tail, *node;
+	
+	if (which_list == FLASHCACHE_WHITELIST) {
+		head = &dmc->whitelist_head;
+		tail = &dmc->whitelist_tail;
+	} else {
+		head = &dmc->blacklist_head;
+		tail = &dmc->blacklist_tail;
+	}
+	for (node = *head ; node != NULL ; node = node->next) {
+		if (which_list == FLASHCACHE_WHITELIST)
+			VERIFY(dmc->num_whitelist_pids > 0);
+		else
+			VERIFY(dmc->num_blacklist_pids > 0);
 		if (time_after(node->expiry, jiffies))
 			continue;
 		if (node->prev == NULL) {
-			dmc->nc_pid_list_head = node->next;
+			*head = node->next;
 			if (node->next)
 				node->next->prev = NULL;
 		} else
 			node->prev->next = node->next;
 		if (node->next == NULL) {
-			dmc->nc_pid_list_tail = node->prev;
+			*tail = node->prev;
 			if (node->prev)
 				node->prev->next = NULL;
 		} else
 			node->next->prev = node->prev;
 		kfree(node);
-		dmc->num_nc_pids--;
-		dmc->nc_expiry++;
+		if (which_list == FLASHCACHE_WHITELIST)
+			dmc->num_whitelist_pids--;
+		else
+			dmc->num_blacklist_pids--;
+		dmc->expiry++;
 	}
-	dmc->nc_pid_expire_check = jiffies + (sysctl_nc_pid_expiry_check + 1) * HZ;
+}
+
+static void
+flashcache_pid_expiry_all_locked(struct cache_c *dmc)
+{
+	if (likely(time_before(jiffies, dmc->pid_expire_check)))
+		return;
+	flashcache_pid_expiry_list_locked(dmc, FLASHCACHE_WHITELIST);
+	flashcache_pid_expiry_list_locked(dmc, FLASHCACHE_BLACKLIST);
+	dmc->pid_expire_check = jiffies + (sysctl_pid_expiry_check + 1) * HZ;
+}
+
+/*
+ * Is the IO cacheable, depending on global cacheability and the white/black
+ * lists ? This function is a bit confusing because we want to support inheritance
+ * of cacheability across pthreads (so we use the tgid). But when an entire thread
+ * group is added to the white/black list, we want to provide for exceptions for 
+ * individual threads as well.
+ * The Rules (in decreasing order of priority) :
+ * 1) Check the pid (thread id) against the list. 
+ * 2) Check the tgid against the list, then check for exceptions within the tgid.
+ */
+static int
+flashcache_uncacheable(struct cache_c *dmc)
+{
+	int dontcache;
+	
+	if (sysctl_cache_all) {
+		/* If the tid has been blacklisted, we don't cache at all.
+		   This overrides everything else */
+		dontcache = flashcache_find_pid_locked(dmc, current->pid, 
+						       FLASHCACHE_BLACKLIST);
+		if (dontcache)
+			goto out;
+		/* Is the tgid in the blacklist ? */
+		dontcache = flashcache_find_pid_locked(dmc, current->tgid, 
+						       FLASHCACHE_BLACKLIST);
+		/* 
+		 * If we found the tgid in the blacklist, is there a whitelist
+		 * exception entered for this thread ?
+		 */
+		if (dontcache) {
+			if (flashcache_find_pid_locked(dmc, current->pid, 
+						       FLASHCACHE_WHITELIST))
+				dontcache = 0;
+		}
+	} else { /* cache nothing */
+		/* If the tid has been whitelisted, we cache 
+		   This overrides everything else */
+		dontcache = !flashcache_find_pid_locked(dmc, current->pid, 
+							FLASHCACHE_WHITELIST);
+		if (!dontcache)
+			goto out;
+		/* Is the tgid in the whitelist ? */
+		dontcache = !flashcache_find_pid_locked(dmc, current->tgid, 
+							FLASHCACHE_WHITELIST);
+		/* 
+		 * If we found the tgid in the whitelist, is there a black list 
+		 * exception entered for this thread ?
+		 */
+		if (!dontcache) {
+			if (flashcache_find_pid_locked(dmc, current->pid, 
+						       FLASHCACHE_BLACKLIST))
+				dontcache = 1;
+		}
+	}
+out:
+	return dontcache;
 }
 
 /*
@@ -1894,18 +2036,31 @@ flashcache_ioctl(struct dm_target *ti, unsigned int cmd, unsigned long arg)
 	pid_t pid;
 
 	switch(cmd) {
-	case FLASHCACHEADDNCPID:
+	case FLASHCACHEADDBLACKLIST:
 		if (copy_from_user(&pid, (pid_t *)arg, sizeof(pid_t)))
 			return -EFAULT;
-		flashcache_add_nc_pid(dmc, pid);
+		flashcache_add_pid(dmc, pid, FLASHCACHE_BLACKLIST);
 		return 0;
-	case FLASHCACHEDELNCPID:
+	case FLASHCACHEDELBLACKLIST:
 		if (copy_from_user(&pid, (pid_t *)arg, sizeof(pid_t)))
 			return -EFAULT;
-		flashcache_del_nc_pid(dmc, pid);
+		flashcache_del_pid(dmc, pid, FLASHCACHE_BLACKLIST);
 		return 0;
-	case FLASHCACHEDELNCALL:
-		flashcache_del_nc_all(dmc);
+	case FLASHCACHEDELALLBLACKLIST:
+		flashcache_del_all_pids(dmc, FLASHCACHE_BLACKLIST, 0);
+		return 0;
+	case FLASHCACHEADDWHITELIST:
+		if (copy_from_user(&pid, (pid_t *)arg, sizeof(pid_t)))
+			return -EFAULT;
+		flashcache_add_pid(dmc, pid, FLASHCACHE_WHITELIST);
+		return 0;
+	case FLASHCACHEDELWHITELIST:
+		if (copy_from_user(&pid, (pid_t *)arg, sizeof(pid_t)))
+			return -EFAULT;
+		flashcache_del_pid(dmc, pid, FLASHCACHE_WHITELIST);
+		return 0;
+	case FLASHCACHEDELALLWHITELIST:
+		flashcache_del_all_pids(dmc, FLASHCACHE_WHITELIST, 0);
 		return 0;
 	default:
 		fake_file.f_mode = dmc->disk_dev->mode;
@@ -1921,6 +2076,7 @@ flashcache_ioctl(struct dm_target *ti, unsigned int cmd, unsigned long arg)
 		return __blkdev_driver_ioctl(dmc->disk_dev->bdev, dmc->disk_dev->mode, cmd, arg);
 #endif
 	}
+
 }
 
 EXPORT_SYMBOL(flashcache_io_callback);

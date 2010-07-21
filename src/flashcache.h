@@ -195,10 +195,10 @@ struct cache_c {
 	unsigned long noroom;		/* No room in set */
 	unsigned long md_write_dirty;	/* Metadata sector writes dirtying block */
 	unsigned long md_write_clean;	/* Metadata sector writes cleaning block */
-	unsigned long nc_pid_drops;
-	unsigned long nc_pid_adds;
-	unsigned long nc_pid_dels;
-	unsigned long nc_expiry;
+	unsigned long pid_drops;
+	unsigned long pid_adds;
+	unsigned long pid_dels;
+	unsigned long expiry;
 	unsigned long front_merge, back_merge;	/* Write Merging */
 
 	unsigned long clean_set_calls;
@@ -221,9 +221,12 @@ struct cache_c {
 	struct delayed_work delayed_clean;
 #endif
 
-	struct flashcache_non_cacheable_pid *nc_pid_list_head, *nc_pid_list_tail;
-	int num_nc_pids;
-	unsigned long nc_pid_expire_check;
+	unsigned long pid_expire_check;
+
+	struct flashcache_cachectl_pid *blacklist_head, *blacklist_tail;
+	struct flashcache_cachectl_pid *whitelist_head, *whitelist_tail;
+	int num_blacklist_pids, num_whitelist_pids;
+	unsigned long blacklist_expire_check, whitelist_expire_check;
 
 	struct cache_c	*next_cache;
 
@@ -349,15 +352,16 @@ enum {
 	FLASHCACHE_WB_DEBUG=3,
 	FLASHCACHE_WB_MAX_CLEAN_IOS_SET=4,
 	FLASHCACHE_WB_MAX_CLEAN_IOS_TOTAL=5,
-	FLASHCACHE_WB_MAX_NC_PIDS=6,
-	FLASHCACHE_WB_MAX_NC_PID_EXPIRY=7,
-	FLASHCACHE_WB_DO_NC_EXPIRY=8,
+	FLASHCACHE_WB_MAX_PIDS=6,
+	FLASHCACHE_WB_MAX_PID_EXPIRY=7,
+	FLASHCACHE_WB_DO_EXPIRY=8,
 	FLASHCACHE_WB_RECLAIM_POLICY=9,
 	FLASHCACHE_WB_WRITE_MERGE=10,
 	FLASHCACHE_WB_ZERO_STATS=11,
 	FLASHCACHE_WB_ERROR_INJECT=12,
 	FLASHCACHE_WB_DO_FAST_REMOVE=13,
 	FLASHCACHE_WB_STOP_SYNC=14,
+	FLASHCACHE_WB_CACHE_ALL=15,
 };
 
 #define DIRTY_THRESH_MIN	10
@@ -367,9 +371,14 @@ enum {
 /* DM async IO mempool sizing */
 #define FLASHCACHE_ASYNC_SIZE 1024
 
-struct flashcache_non_cacheable_pid {
+enum {
+	FLASHCACHE_WHITELIST=0,
+	FLASHCACHE_BLACKLIST=1,
+};
+
+struct flashcache_cachectl_pid {
 	pid_t					pid;
-	struct flashcache_non_cacheable_pid	*next, *prev;
+	struct flashcache_cachectl_pid		*next, *prev;
 	unsigned long				expiry;
 };
 
@@ -449,7 +458,7 @@ void flashcache_md_write(struct kcached_job *job);
 void flashcache_do_io(struct kcached_job *job);
 void flashcache_clean_set(struct cache_c *dmc, int set);
 void flashcache_sync_all(struct cache_c *dmc);
-void flashcache_del_nc_all(struct cache_c *dmc);
+void flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force);
 void flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 

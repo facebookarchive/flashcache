@@ -130,6 +130,9 @@ dev.flashcache.do_sync:
 	Schedule cleaning of all dirty blocks in the cache. 
 dev.flashcache.stop_sync: 
 	Stop the sync in progress.
+dev.flashcache.cache_all:
+	Global caching mode to cache everything or cache nothing.
+	See section on Caching Controls. Defaults to "cache everything".
 
 There is little reason to change these :
 
@@ -140,12 +143,12 @@ dev.flashcache.max_clean_ios_total:
 	Maximum writes that can be issued when syncing all blocks.
 dev.flashcache.debug:
 	Enable verbose debugging.
-dev.flashcache.do_nc_pid_expiry:
-	Enable expiry on the list of non-cacheable pids.
-dev.flashcache.nc_pid_expiry_secs:
-	Set the expiry on the list of non-cacheable pids.
-dev.flashcache.max_nc_pids:
-	Maximum number of non-cacheable pids.
+dev.flashcache.do_pid_expiry:
+	Enable expiry on the list of pids in the white/black lists.
+dev.flashcache.pid_expiry_secs:
+	Set the expiry on the pid white/black lists.
+dev.flashcache.max_pids:
+	Maximum number of pids in the white/black lists.
 
 Using dmsetup to create and load flashcache volumes :
 ===================================================
@@ -195,23 +198,62 @@ The size of the cache is 522000000 sectors.
 (TODO : Change loading of the cache happen via "dmsetup load" instead
 of "dmsetup create").
 
-Non-cacheability ioctls :
-=======================
-When doing backups or full database table scans, often we want
-IOs to be non-cacheable by flashcache. 
+Caching Controls
+================
+Flashcache can be put in one of 2 modes - Cache Everything or 
+Cache Nothing (dev.flashcache.cache_all). The defaults is to "cache
+everything".
 
-Flashcache provides support (via ioctls) to mark all IOs for 
-tagged processes be non-cacheable. (Note that this only works
-for O_DIRECT IOs. For buffered IOs, pdflush, kswapd would 
-also do the writes, with flashcache caching those).
+These 2 modes have a blacklist and a whitelist.
 
-The following ioctls are supported on /dev/mapper/<cachedev>
+The tgid (thread group id) for a group of pthreads can be used as a
+shorthand to tag all threads in an application. The tgid for a pthread
+is returned by getpid() and the pid of the individual thread is
+returned by gettid().
 
-FLASHCACHEADDNCPID: add the pid to the list of pids tagged for
-non-cacheable IOs.
-FLASHCACHEDELNCPID: remove the pid from the list.
-FLASHCACHEDELNCALL: remove all registered non-cacheable pids. 
-This can be used to cleanup if a process dies.
+The algorithm works as follows :
+
+In "cache everything" mode,
+1) If the pid of the process issuing the IO is in the blacklist, do
+not cache the IO. ELSE,
+2) If the tgid is in the blacklist, don't cache this IO. UNLESS
+3) The particular pid is marked as an exception (and entered in the
+whitelist, which makes the IO cacheable).
+
+Conversely, in "cache nothing" mode,
+1) If the pid of the process issuing the IO is in the whitelist,
+cache the IO. ELSE,
+2) If the tgid is in the whitelist, cache this IO. UNLESS
+3) The particular pid is marked as an exception (and entered in the
+blacklist, which makes the IO non-cacheable).
+
+Examples :
+--------
+1) You can make the global cache setting "cache nothing", and add the
+tgid of your pthreaded application to the whitelist. Which makes only
+IOs issued by your application cacheable by Flashcache. 
+2) You can make the global cache setting "cache everything" and add
+tgids (or pids) of other applications that may issue IOs on this
+volume to the blacklist, which will make those un-interesting IOs not
+cacheable. 
+
+Note that this only works for O_DIRECT IOs. For buffered IOs, pdflush,
+kswapd would also do the writes, with flashcache caching those.
+
+The following cacheability ioctls are supported on /dev/mapper/<cachedev> 
+
+FLASHCACHEADDBLACKLIST: add the pid (or tgid) to the blacklist.
+FLASHCACHEDELBLACKLIST: Remove the pid (or tgid) from the blacklist.
+FLASHCACHEDELALLBLACKLIST: Clear the blacklist. This can be used to
+cleanup if a process dies.
+
+FLASHCACHEADDWHITELIST: add the pid (or tgid) to the whitelist.
+FLASHCACHEDELWHITELIST: Remove the pid (or tgid) from the whitelist.
+FLASHCACHEDELALLWHITELIST: Clear the whitelist. This can be used to
+cleanup if a process dies.
+
+/proc/flashcache_pidlists shows the list of pids on the whitelist
+and the blacklist.
 
 Security Note :
 =============
