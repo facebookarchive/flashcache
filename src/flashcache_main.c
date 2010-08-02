@@ -52,7 +52,6 @@
 #include <linux/bio.h>
 #include <linux/dm-kcopyd.h>
 #endif
-
 #include "flashcache.h"
 #include "flashcache_ioctl.h"
 
@@ -69,9 +68,9 @@
  * cache read miss.
  */
 
-static int flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
-				int index);
-static int flashcache_write(struct cache_c *dmc, struct bio* bio);
+static void flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
+				 int index);
+static void flashcache_write(struct cache_c *dmc, struct bio* bio);
 static int flashcache_inval_blocks(struct cache_c *dmc, struct bio *bio);
 static void flashcache_dirty_writeback(struct cache_c *dmc, int index);
 void flashcache_sync_blocks(struct cache_c *dmc);
@@ -81,6 +80,7 @@ static void flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid,
 				      int which_list);
 static void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
 static int flashcache_uncacheable(struct cache_c *dmc);
+static void flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio);
 
 extern struct work_struct _kcached_wq;
 extern u_int64_t size_hist[];
@@ -114,6 +114,7 @@ static int dm_io_async_bvec(unsigned int num_regions,
 }
 #endif
 
+
 void 
 flashcache_io_callback(unsigned long error, void *context)
 {
@@ -123,7 +124,8 @@ flashcache_io_callback(unsigned long error, void *context)
 	unsigned long flags;
 	int index = job->index;
 	struct cacheblock *cacheblk = &dmc->cache[index];
-		
+
+	VERIFY(index != -1);		
 	bio = job->bio;
 	VERIFY(bio != NULL);
 	if (error)
@@ -345,10 +347,10 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 			}
 		}
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		pending_job->bio->bi_bdev = dmc->disk_dev->bdev;
 		DPRINTK("flashcache_do_pending: Sending down IO %llu",
 			pending_job->bio->bi_sector);
-		generic_make_request(pending_job->bio);
+		/* Start uncached IO */
+		flashcache_start_uncached_io(dmc, pending_job->bio);
 		flashcache_free_pending_job(pending_job);
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	}
@@ -1073,9 +1075,9 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	kfree(writes_list);
 }
 
-static int 
+static void
 flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
-			  int index)
+		     int index)
 {
 	struct kcached_job *job;
 	struct cacheblock *cacheblk = &dmc->cache[index];
@@ -1112,10 +1114,9 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 				 flashcache_io_callback, job);
 		flashcache_clean_set(dmc, index / dmc->assoc);
 	}
-	return DM_MAPIO_SUBMITTED;
 }
 
-static int
+static void
 flashcache_read(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
@@ -1128,7 +1129,6 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
 		bio->bi_sector, bio->bi_size);
 
-	dmc->reads++;
 	spin_lock_irq(&dmc->cache_spin_lock);
 	res = flashcache_lookup(dmc, bio, &index);
 	/* 
@@ -1192,7 +1192,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 					flashcache_enq_pending(dmc, bio, index, READCACHE, pjob);
 				spin_unlock_irq(&dmc->cache_spin_lock);
 			}
-			return DM_MAPIO_SUBMITTED;
+			return;
 		}
 	}
 	/*
@@ -1204,7 +1204,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		if (unlikely(queued < 0))
 			flashcache_bio_endio(bio, -EIO);
 		spin_unlock_irq(&dmc->cache_spin_lock);
-		return DM_MAPIO_SUBMITTED;
+		return;
 	}
 	if (res == -1 || flashcache_uncacheable(dmc)) {
 		/* No room or non-cacheable */
@@ -1213,9 +1213,9 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
 		if (res == -1)
 			flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector));
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_start_uncached_io(dmc, bio);
+		return;
 	}
 	/* 
 	 * (res == INVALID) Cache Miss 
@@ -1232,7 +1232,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 
 	DPRINTK("Cache read: Block %llu(%lu), index = %d:%s",
 		bio->bi_sector, bio->bi_size, index, "CACHE MISS & REPLACE");
-	return flashcache_read_miss(dmc, bio, index);
+	flashcache_read_miss(dmc, bio, index);
 }
 
 /*
@@ -1358,7 +1358,7 @@ out:
 	return queued;
 }
 
-static int
+static void
 flashcache_write(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
@@ -1369,7 +1369,6 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	int queued;
 	
 	spin_lock_irq(&dmc->cache_spin_lock);
-	dmc->writes++;
 	res = flashcache_lookup(dmc, bio, &index);
 	/*
 	 * If cache hit and !BUSY, simply redirty page.
@@ -1383,8 +1382,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 		cacheblk = &dmc->cache[index];		
 		if ((cacheblk->cache_state & VALID) && 
 		    (cacheblk->dbn == bio->bi_sector)) {
-			if (!(cacheblk->cache_state & BLOCK_IO_INPROG) &&
-			    (cacheblk->head == NULL)) {
+			if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
 				if (cacheblk->cache_state & DIRTY)
 					dmc->dirty_write_hits++;
 				dmc->write_hits++;
@@ -1436,7 +1434,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 					flashcache_enq_pending(dmc, bio, index, WRITECACHE, pjob);
 				spin_unlock_irq(&dmc->cache_spin_lock);
 			}
-			return DM_MAPIO_SUBMITTED;
+			return;
 		}
 		/* Cache Miss, found block to recycle */
 		queued = flashcache_inval_blocks(dmc, bio);
@@ -1444,7 +1442,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 			if (unlikely(queued < 0))
 				flashcache_bio_endio(bio, -EIO);
 			spin_unlock_irq(&dmc->cache_spin_lock);
-			return DM_MAPIO_SUBMITTED;
+			return;
 		}
 		if (cacheblk->cache_state & VALID)
 			dmc->wr_replace++;
@@ -1486,7 +1484,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 			flashcache_unplug_device(dmc->cache_dev->bdev);
 			flashcache_clean_set(dmc, index / dmc->assoc);
 		}
-		return DM_MAPIO_SUBMITTED;
+		return;
 	}
 	/*
 	 * No room in the set. We cannot write to the cache and have to 
@@ -1494,17 +1492,15 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	 * for potential invalidations !
 	 */
 	queued = flashcache_inval_blocks(dmc, bio);
+	spin_unlock_irq(&dmc->cache_spin_lock);
 	if (queued) {
 		if (unlikely(queued < 0))
 			flashcache_bio_endio(bio, -EIO);
-		spin_unlock_irq(&dmc->cache_spin_lock);
-		return DM_MAPIO_SUBMITTED;
+		return;
 	}
-	spin_unlock_irq(&dmc->cache_spin_lock);
+	/* Start uncached IO */
+	flashcache_start_uncached_io(dmc, bio);
 	flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector));
-	/* Forward to source device */
-	bio->bi_bdev = dmc->disk_dev->bdev;
-	return DM_MAPIO_REMAPPED;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
@@ -1530,6 +1526,11 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 
 	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
 
+	if (bio_data_dir(bio) == READ)
+		dmc->reads++;
+	else
+		dmc->writes++;
+
 	spin_lock_irq(&dmc->cache_spin_lock);
 	if (unlikely(sysctl_pid_do_expiry && 
 		     (dmc->whitelist_head || dmc->blacklist_head)))
@@ -1541,19 +1542,18 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 		if (queued) {
 			if (unlikely(queued < 0))
 				flashcache_bio_endio(bio, -EIO);
-			return DM_MAPIO_SUBMITTED;
 		} else {
-			/* Forward to source device */
-			bio->bi_bdev = dmc->disk_dev->bdev;
-			return DM_MAPIO_REMAPPED;
+			/* Start uncached IO */
+			flashcache_start_uncached_io(dmc, bio);
 		}
-	} else
+	} else {
 		spin_unlock_irq(&dmc->cache_spin_lock);		
-
-	if (bio_data_dir(bio) == READ)
-		return flashcache_read(dmc, bio);
-	else
-		return flashcache_write(dmc, bio);
+		if (bio_data_dir(bio) == READ)
+			flashcache_read(dmc, bio);
+		else
+			flashcache_write(dmc, bio);
+	}
+	return DM_MAPIO_SUBMITTED;
 }
 
 /* Block sync support functions */
@@ -1730,7 +1730,6 @@ flashcache_sync_all(struct cache_c *dmc)
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);	
 	flashcache_sync_blocks(dmc);
 }
-
 
 static int
 flashcache_find_pid_locked(struct cache_c *dmc, pid_t pid, 
@@ -2087,6 +2086,100 @@ flashcache_ioctl(struct dm_target *ti, unsigned int cmd, unsigned long arg)
 #endif
 	}
 
+}
+
+/*
+ * We handle uncached IOs ourselves to deal with the problem of out of ordered
+ * IOs corrupting the cache. Consider the case where we get 2 concurent IOs
+ * for the same block Write-Read (or a Write-Write). Consider the case where
+ * the first Write is uncacheable and the second IO is cacheable. If the 
+ * 2 IOs are out-of-ordered below flashcache, then we will cache inconsistent
+ * data in flashcache (persistently).
+ * 
+ * We do invalidations before launching uncacheable IOs to disk. But in case
+ * of out of ordering the invalidations before launching the IOs does not help.
+ * We need to invalidate after the IO completes.
+ * 
+ * Doing invalidations after the completion of an uncacheable IO will cause 
+ * any overlapping dirty blocks in the cache to be written out and the IO 
+ * relaunched. If the overlapping blocks are busy, the IO is relaunched to 
+ * disk also (post invalidation). In these 2 cases, we will end up sending
+ * 2 disk IOs for the block. But this is a rare case.
+ * 
+ * When 2 IOs for the same block are sent down (by un co-operating processes)
+ * the storage stack is allowed to re-order the IOs at will. So the applications
+ * cannot expect any ordering at all.
+ * 
+ * What we try to avoid here is inconsistencies between disk and the ssd cache.
+ */
+void 
+flashcache_uncached_io_complete(struct kcached_job *job)
+{
+	struct cache_c *dmc = job->dmc;
+	unsigned long flags;
+	int queued;
+	int error = job->error;
+
+	if (unlikely(error)) {
+		if (bio_data_dir(job->bio) == WRITE)
+			dmc->disk_write_errors++;
+		else
+			dmc->disk_read_errors++;
+	}
+	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	queued = flashcache_inval_blocks(dmc, job->bio);
+	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	if (queued) {
+		if (unlikely(queued < 0))
+			flashcache_bio_endio(job->bio, -EIO);
+		/* 
+		 * The IO will be re-executed.
+		 * The do_pending logic will re-launch the 
+		 * disk IO post-invalidation calling start_uncached_io.
+		 * This should be a rare occurrence though.
+		 * XXX - We should track this.
+		 */
+	} else {
+		flashcache_bio_endio(job->bio, error);
+	}
+	flashcache_free_cache_job(job);
+	if (atomic_dec_and_test(&dmc->nr_jobs))
+		wake_up(&dmc->destroyq);
+}
+
+static void 
+flashcache_uncached_io_callback(unsigned long error, void *context)
+{
+	struct kcached_job *job = (struct kcached_job *) context;
+
+	VERIFY(job->index == -1);
+	push_uncached_io_complete(job);
+	schedule_work(&_kcached_wq);
+}
+
+static void
+flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio)
+{
+	int is_write = (bio_data_dir(bio) == WRITE);
+	struct kcached_job *job;
+	
+	if (is_write) {
+		dmc->uncached_writes++;
+		dmc->disk_writes++;
+	} else {
+		dmc->uncached_reads++;
+		dmc->disk_reads++;
+	}
+	job = new_kcached_job(dmc, bio, -1);
+	if (unlikely(job == NULL)) {
+		flashcache_bio_endio(bio, -EIO);
+		return;
+	}
+	atomic_inc(&dmc->nr_jobs);
+	dm_io_async_bvec(1, &job->disk,
+			 ((is_write) ? WRITE : READ), 
+			 bio->bi_io_vec + bio->bi_idx,
+			 flashcache_uncached_io_callback, job);
 }
 
 EXPORT_SYMBOL(flashcache_io_callback);

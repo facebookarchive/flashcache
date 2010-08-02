@@ -451,6 +451,7 @@ void push_pending(struct kcached_job *job);
 void push_io(struct kcached_job *job);
 void push_md_io(struct kcached_job *job);
 void push_md_complete(struct kcached_job *job);
+void push_uncached_io_complete(struct kcached_job *job);
 int flashcache_pending_empty(void);
 int flashcache_io_empty(void);
 int flashcache_md_io_empty(void);
@@ -459,6 +460,7 @@ void flashcache_md_write_done(struct kcached_job *job);
 void flashcache_do_pending(struct kcached_job *job);
 void flashcache_md_write(struct kcached_job *job);
 void flashcache_do_io(struct kcached_job *job);
+void flashcache_uncached_io_complete(struct kcached_job *job);
 void flashcache_clean_set(struct cache_c *dmc, int set);
 void flashcache_sync_all(struct cache_c *dmc);
 void flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force);
@@ -474,6 +476,7 @@ int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where,
 #endif
 void flashcache_update_sync_progress(struct cache_c *dmc);
 void flashcache_unplug_device(struct block_device *bdev);
+
 #endif /* __KERNEL__ */
 
 #endif

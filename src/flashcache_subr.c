@@ -52,7 +52,6 @@
 #include <linux/bio.h>
 #include <linux/dm-kcopyd.h>
 #endif
-
 #include "flashcache.h"
 
 static DEFINE_SPINLOCK(_job_lock);
@@ -67,6 +66,7 @@ LIST_HEAD(_pending_jobs);
 LIST_HEAD(_io_jobs);
 LIST_HEAD(_md_io_jobs);
 LIST_HEAD(_md_complete_jobs);
+LIST_HEAD(_uncached_io_complete_jobs);
 
 int
 flashcache_pending_empty(void)
@@ -90,6 +90,12 @@ int
 flashcache_md_complete_empty(void)
 {
 	return list_empty(&_md_complete_jobs);
+}
+
+int
+flashcache_uncached_io_complete_empty(void)
+{
+	return list_empty(&_uncached_io_complete_jobs);
 }
 
 struct kcached_job *
@@ -258,6 +264,12 @@ push_io(struct kcached_job *job)
 }
 
 void
+push_uncached_io_complete(struct kcached_job *job)
+{
+	push(&_uncached_io_complete_jobs, job);	
+}
+
+void
 push_md_io(struct kcached_job *job)
 {
 	push(&_md_io_jobs, job);	
@@ -290,6 +302,7 @@ do_work(struct work_struct *unused)
 	process_jobs(&_pending_jobs, flashcache_do_pending);
 	process_jobs(&_md_io_jobs, flashcache_md_write);
 	process_jobs(&_io_jobs, flashcache_do_io);
+	process_jobs(&_uncached_io_complete_jobs, flashcache_uncached_io_complete);
 }
 
 struct kcached_job *
@@ -306,13 +319,20 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	job->dmc = dmc;
 	job->index = index;
 	job->cache.bdev = dmc->cache_dev->bdev;
-	job->cache.sector = (index << dmc->block_shift) + dmc->md_sectors;
-	job->cache.count = dmc->block_size;	
+	if (index != -1) {
+		job->cache.sector = (index << dmc->block_shift) + dmc->md_sectors;
+		job->cache.count = dmc->block_size;	
+	}
 	job->error = 0;	
 	job->bio = bio;
-	job->disk.sector = dmc->cache[index].dbn;
 	job->disk.bdev = dmc->disk_dev->bdev;
-	job->disk.count = dmc->block_size;
+	if (index != -1) {
+		job->disk.sector = dmc->cache[index].dbn;
+		job->disk.count = dmc->block_size;
+	} else {
+		job->disk.sector = bio->bi_sector;
+		job->disk.count = to_sector(bio->bi_size);
+	}
 	job->next = NULL;
 	job->md_sector = NULL;
 	return job;
