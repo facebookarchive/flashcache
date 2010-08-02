@@ -55,11 +55,16 @@
 static struct workqueue_struct *_kcached_wq;
 static struct work_struct _kcached_work;
 
-static int cache_read_miss(struct cache_c *dmc, struct bio* bio,
-			   int index);
-static int cache_write(struct cache_c *dmc, 
-		       struct bio* bio);
+static void cache_read_miss(struct cache_c *dmc, struct bio* bio,
+			    int index);
+static void cache_write(struct cache_c *dmc, 
+			struct bio* bio);
 static int cache_invalidate_blocks(struct cache_c *dmc, struct bio *bio);
+
+static void flashcache_wt_uncached_io_callback(unsigned long error, 
+					       void *context);
+static void flashcache_wt_start_uncached_io(struct cache_c *dmc, 
+					    struct bio *bio);
 
 u_int64_t size_hist[33];
 
@@ -335,15 +340,14 @@ flashcache_wt_do_complete(struct kcached_job *job)
 	VERIFY(job->rw == READCACHE_DONE);
 	DPRINTK("flashcache_wt_do_complete: %llu", bio->bi_sector);
 	/* error || block invalidated while reading from cache || bad checksum */
-	/* Kick this IO back to the source bdev */
-	bio->bi_bdev = dmc->disk_dev->bdev;
-	generic_make_request(bio);
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	dmc->cache_state[job->index] = INVALID;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	mempool_free(job, _job_pool);
 	if (atomic_dec_and_test(&dmc->nr_jobs))
 		wake_up(&dmc->destroyq);
+	/* Kick this IO back to the source bdev */
+	flashcache_wt_start_uncached_io(dmc, bio);
 	return 0;
 }
 
@@ -553,10 +557,15 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 		return NULL;
 	job->disk.bdev = dmc->disk_dev->bdev;
 	job->disk.sector = bio->bi_sector;
-	job->disk.count = dmc->block_size;
+	if (index != -1)
+		job->disk.count = dmc->block_size;
+	else
+		job->disk.count = to_sector(bio->bi_size);
 	job->cache.bdev = dmc->cache_dev->bdev;
-	job->cache.sector = index << dmc->block_shift;
-	job->cache.count = dmc->block_size;
+	if (index != -1) {
+		job->cache.sector = index << dmc->block_shift;
+		job->cache.count = dmc->block_size;
+	}
 	job->dmc = dmc;
 	job->bio = bio;
 	job->index = index;
@@ -564,7 +573,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	return job;
 }
 
-static int 
+static void
 cache_read_miss(struct cache_c *dmc, struct bio* bio,
 		int index)
 {
@@ -575,26 +584,24 @@ cache_read_miss(struct cache_c *dmc, struct bio* bio,
 		bio->bi_sector, bio->bi_size, index);
 
 	job = new_kcached_job(dmc, bio, index);
-	if (job == NULL) {
+	if (unlikely(job == NULL)) {
 		/* XXX - need to bump up a stat here */	
 		DMERR("cache_read_miss: Cannot allocate job\n");
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_state[index] = INVALID;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		flashcache_bio_endio(bio, -EIO);
+	} else {
+		job->rw = READSOURCE; /* Fetch data from the source device */
+		DPRINTK("Queue job for %llu", bio->bi_sector);
+		atomic_inc(&dmc->nr_jobs);
+		dm_io_async_bvec(1, &job->disk, READ,
+				 bio->bi_io_vec + bio->bi_idx,
+				 flashcache_wt_io_callback, job);
 	}
-	job->rw = READSOURCE; /* Fetch data from the source device */
-	DPRINTK("Queue job for %llu", bio->bi_sector);
-	atomic_inc(&dmc->nr_jobs);
-	dm_io_async_bvec(1, &job->disk, READ,
-			 bio->bi_io_vec + bio->bi_idx,
-			 flashcache_wt_io_callback, job);
-	return DM_MAPIO_SUBMITTED;
 }
 
-static int
+static void
 cache_read(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
@@ -618,26 +625,25 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
 			     bio->bi_sector, bio->bi_size, index, "CACHE HIT");
 		job = new_kcached_job(dmc, bio, index);
-		if (job == NULL) {
+		if (unlikely(job == NULL)) {
 			/* 
-			 * Can't allocate job, bounce back to source dev 
+			 * Can't allocate job, bounce back error
 			 * XXX - need up bump a stat here
 			 */
 			DMERR("cache_read(_hit): Cannot allocate job\n");
 			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 			dmc->cache_state[index] = VALID;
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-			/* Forward to source device */
-			bio->bi_bdev = dmc->disk_dev->bdev;
-			return DM_MAPIO_REMAPPED;
+			flashcache_bio_endio(bio, -EIO);
+		} else {
+			job->rw = READCACHE; /* Fetch data from the source device */
+			DPRINTK("Queue job for %llu", bio->bi_sector);
+			atomic_inc(&dmc->nr_jobs);
+			dm_io_async_bvec(1, &job->cache, READ,
+					 bio->bi_io_vec + bio->bi_idx,
+					 flashcache_wt_io_callback, job);
 		}
-		job->rw = READCACHE; /* Fetch data from the source device */
-		DPRINTK("Queue job for %llu", bio->bi_sector);
-		atomic_inc(&dmc->nr_jobs);
-		dm_io_async_bvec(1, &job->cache, READ,
-				 bio->bi_io_vec + bio->bi_idx,
-				 flashcache_wt_io_callback, job);
-		return DM_MAPIO_SUBMITTED;
+		return;
 	}
 	/*
 	 * In all cases except for a cache hit (and VALID), test for potential 
@@ -646,9 +652,9 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 	if (cache_invalidate_blocks(dmc, bio) > 0) {
 		/* A non zero return indicates an inprog invalidation */
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	if (res == -1 || res >= INPROG) {
 		/*
@@ -659,9 +665,9 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		DPRINTK_LITE("Cache read: Block %llu(%lu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	/* 
 	 * (res == INVALID) Cache Miss 
@@ -678,7 +684,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 
 	DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
 		bio->bi_sector, bio->bi_size, index, "CACHE MISS & REPLACE");
-	return cache_read_miss(dmc, bio, index);
+	cache_read_miss(dmc, bio, index);
 }
 
 static int
@@ -745,7 +751,7 @@ cache_invalidate_blocks(struct cache_c *dmc, struct bio *bio)
 	return (inprog_inval_start + inprog_inval_end);
 }
 
-static int
+static void
 cache_write(struct cache_c *dmc, struct bio* bio)
 {
 	int index;
@@ -758,17 +764,17 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	if (cache_invalidate_blocks(dmc, bio) > 0) {
 		/* A non zero return indicates an inprog invalidation */
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	res = cache_lookup(dmc, bio, &index);
 	VERIFY(res == -1 || res == INVALID);
 	if (res == -1) {
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	if (dmc->cache_state[index] == VALID) {
 		dmc->cached_blocks--;
@@ -778,22 +784,21 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	dmc->cache[index].dbn = bio->bi_sector;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	job = new_kcached_job(dmc, bio, index);
-	if (job == NULL) {
+	if (unlikely(job == NULL)) {
 		/* XXX - need to bump up a stat here */
 		DMERR("cache_write: Cannot allocate job\n");
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_state[index] = INVALID;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		flashcache_bio_endio(bio, -EIO);
+		return;
 	}
 	job->rw = WRITESOURCE; /* Write data to the source device */
 	DPRINTK("Queue job for %llu", bio->bi_sector);
 	atomic_inc(&job->dmc->nr_jobs);
 	dm_io_async_bvec(1, &job->disk, WRITE, bio->bi_io_vec + bio->bi_idx,
 			 flashcache_wt_io_callback, job);
-	return DM_MAPIO_SUBMITTED;
+	return;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
@@ -828,16 +833,51 @@ flashcache_wt_map(struct dm_target *ti, struct bio *bio,
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		(void)cache_invalidate_blocks(dmc, bio);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+	} else {
+		if (bio_data_dir(bio) == READ)
+			cache_read(dmc, bio);
+		else
+			cache_write(dmc, bio);
 	}
-
-	if (bio_data_dir(bio) == READ)
-		return cache_read(dmc, bio);
-	else
-		return cache_write(dmc, bio);
+	return DM_MAPIO_SUBMITTED;
 }
+
+static void
+flashcache_wt_uncached_io_callback(unsigned long error, void *context)
+{
+	struct kcached_job *job = (struct kcached_job *) context;
+        struct cache_c *dmc = job->dmc;
+        unsigned long flags;
+
+	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	(void)cache_invalidate_blocks(dmc, job->bio);
+	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	flashcache_bio_endio(job->bio, error);
+	mempool_free(job, _job_pool);
+	if (atomic_dec_and_test(&dmc->nr_jobs))
+		wake_up(&dmc->destroyq);
+}
+
+static void
+flashcache_wt_start_uncached_io(struct cache_c *dmc, struct bio *bio)
+{
+	int is_write = (bio_data_dir(bio) == WRITE);
+	struct kcached_job *job;
+	
+	job = new_kcached_job(dmc, bio, -1);
+	if (unlikely(job == NULL)) {
+		flashcache_bio_endio(bio, -EIO);
+		return;
+        }
+	atomic_inc(&dmc->nr_jobs);
+	dm_io_async_bvec(1, &job->disk,
+			 ((is_write) ? WRITE : READ),
+			 bio->bi_io_vec + bio->bi_idx,
+			 flashcache_wt_uncached_io_callback, job);
+}
+
 
 /*
  * Construct a cache mapping.
