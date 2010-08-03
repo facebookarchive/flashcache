@@ -36,6 +36,8 @@
 #include <linux/pagemap.h>
 #include <linux/random.h>
 #include <linux/version.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
@@ -51,6 +53,9 @@
 #endif
 
 #include "flashcache_wt.h"
+
+#define FLASHCACHE_WT_SW_VERSION "flashcache_wt-1.0"
+char *flashcache_wt_sw_version = FLASHCACHE_WT_SW_VERSION;
 
 static struct workqueue_struct *_kcached_wq;
 static struct work_struct _kcached_work;
@@ -1213,6 +1218,26 @@ static struct target_type cache_target = {
 	.status = cache_status,
 };
 
+static int 
+flashcache_wt_version_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq, "Flashcache_wt Version : %s\n", flashcache_wt_sw_version);
+	return 0;
+}
+
+static int 
+flashcache_wt_version_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, &flashcache_wt_version_show, NULL);
+}
+
+static struct file_operations flashcache_wt_version_operations = {
+	.open		= flashcache_wt_version_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /*
  * Initiate a cache target.
  */
@@ -1243,6 +1268,15 @@ flashcache_wt_init(void)
 	if (r < 0) {
 		DMERR("cache: register failed %d", r);
 	}
+#ifdef CONFIG_PROC_FS
+	{
+		struct proc_dir_entry *entry;
+		
+		entry = create_proc_entry("flashcache_wt_version", 0, NULL);
+		if (entry)
+			entry->proc_fops =  &flashcache_wt_version_operations;
+	}
+#endif
 	return r;
 }
 
@@ -1262,6 +1296,10 @@ flashcache_wt_exit(void)
 #endif
 	jobs_exit();
 	destroy_workqueue(_kcached_wq);
+#ifdef CONFIG_PROC_FS
+	remove_proc_entry("flashcache_wt_version", NULL);
+#endif
+
 }
 
 module_init(flashcache_wt_init);

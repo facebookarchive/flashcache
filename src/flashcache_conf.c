@@ -1927,6 +1927,28 @@ static struct file_operations flashcache_pidlists_operations = {
 	.release	= single_release,
 };
 
+extern char *flashcache_sw_version;
+
+static int 
+flashcache_version_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq, "Flashcache Version : %s\n", flashcache_sw_version);
+	return 0;
+}
+
+static int 
+flashcache_version_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, &flashcache_version_show, NULL);
+}
+
+static struct file_operations flashcache_version_operations = {
+	.open		= flashcache_version_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /*
  * Initiate a cache target.
  */
@@ -1973,7 +1995,10 @@ flashcache_init(void)
 			entry->proc_fops =  &flashcache_iosize_hist_operations;
 		entry = create_proc_entry("flashcache_pidlists", 0, NULL);
 		if (entry)
-			entry->proc_fops =  &flashcache_pidlists_operations;		
+			entry->proc_fops =  &flashcache_pidlists_operations;
+		entry = create_proc_entry("flashcache_version", 0, NULL);
+		if (entry)
+			entry->proc_fops =  &flashcache_version_operations;
 	}
 #endif
 	flashcache_control = (struct flashcache_control_s *)
@@ -2005,6 +2030,7 @@ flashcache_exit(void)
 	remove_proc_entry("flashcache_errors", NULL);
 	remove_proc_entry("flashcache_iosize_hist", NULL);
 	remove_proc_entry("flashcache_pidlists", NULL);
+	remove_proc_entry("flashcache_version", NULL);
 #endif
 	kfree(flashcache_control);
 }
