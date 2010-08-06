@@ -1079,6 +1079,67 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 }
 
 static void
+flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
+{
+	struct cacheblock *cacheblk;
+	struct pending_job *pjob;
+
+	cacheblk = &dmc->cache[index];
+	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
+		struct kcached_job *job;
+			
+		cacheblk->cache_state |= CACHEREADINPROG;
+		dmc->read_hits++;
+		spin_unlock_irq(&dmc->cache_spin_lock);
+		DPRINTK("Cache read: Block %llu(%lu), index = %d:%s",
+			bio->bi_sector, bio->bi_size, index, "CACHE HIT");
+		job = new_kcached_job(dmc, bio, index);
+		if (unlikely(sysctl_flashcache_error_inject & READ_HIT_JOB_ALLOC_FAIL)) {
+			if (job)
+				flashcache_free_cache_job(job);
+			job = NULL;
+			sysctl_flashcache_error_inject &= ~READ_HIT_JOB_ALLOC_FAIL;
+		}
+		if (unlikely(job == NULL)) {
+			/* 
+			 * We have a read hit, and can't allocate a job.
+			 * Since we dropped the spinlock, we have to drain any 
+			 * pending jobs.
+			 */
+			DMERR("flashcache: Read (hit) failed ! Can't allocate memory for cache IO, block %lu", 
+			      cacheblk->dbn);
+			flashcache_bio_endio(bio, -EIO);
+			spin_lock_irq(&dmc->cache_spin_lock);
+			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
+			cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
+			spin_unlock_irq(&dmc->cache_spin_lock);
+		} else {
+			job->action = READCACHE; /* Fetch data from cache */
+			atomic_inc(&dmc->nr_jobs);
+			dmc->ssd_reads++;
+			dm_io_async_bvec(1, &job->cache, READ,
+					 bio->bi_io_vec + bio->bi_idx,
+					 flashcache_io_callback, job);
+			flashcache_unplug_device(dmc->cache_dev->bdev);
+		}
+	} else {
+		pjob = flashcache_alloc_pending_job(dmc);
+		if (unlikely(sysctl_flashcache_error_inject & READ_HIT_PENDING_JOB_ALLOC_FAIL)) {
+			if (pjob) {
+				flashcache_free_pending_job(pjob);
+				pjob = NULL;
+			}
+			sysctl_flashcache_error_inject &= ~READ_HIT_PENDING_JOB_ALLOC_FAIL;
+		}
+		if (pjob == NULL)
+			flashcache_bio_endio(bio, -EIO);
+		else
+			flashcache_enq_pending(dmc, bio, index, READCACHE, pjob);
+		spin_unlock_irq(&dmc->cache_spin_lock);
+	}
+}
+
+static void
 flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		     int index)
 {
@@ -1126,7 +1187,6 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	int res;
 	struct cacheblock *cacheblk;
 	int queued;
-	struct pending_job *pjob;
 
 	DPRINTK("Got a %s for %llu  %u bytes)",
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
@@ -1143,58 +1203,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		cacheblk = &dmc->cache[index];
 		if ((cacheblk->cache_state & VALID) && 
 		    (cacheblk->dbn == bio->bi_sector)) {
-			if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
-				struct kcached_job *job;
-			
-				cacheblk->cache_state |= CACHEREADINPROG;
-				dmc->read_hits++;
-				spin_unlock_irq(&dmc->cache_spin_lock);
-				DPRINTK("Cache read: Block %llu(%lu), index = %d:%s",
-					bio->bi_sector, bio->bi_size, index, "CACHE HIT");
-				job = new_kcached_job(dmc, bio, index);
-				if (unlikely(sysctl_flashcache_error_inject & READ_HIT_JOB_ALLOC_FAIL)) {
-					if (job)
-						flashcache_free_cache_job(job);
-					job = NULL;
-					sysctl_flashcache_error_inject &= ~READ_HIT_JOB_ALLOC_FAIL;
-				}
-				if (unlikely(job == NULL)) {
-					/* 
-					 * We have a read hit, and can't allocate a job.
-					 * Since we dropped the spinlock, we have to drain any 
-					 * pending jobs.
-					 */
-					DMERR("flashcache: Read (hit) failed ! Can't allocate memory for cache IO, block %lu", 
-					      cacheblk->dbn);
-					flashcache_bio_endio(bio, -EIO);
-					spin_lock_irq(&dmc->cache_spin_lock);
-					flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
-					cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
-					spin_unlock_irq(&dmc->cache_spin_lock);
-				} else {
-					job->action = READCACHE; /* Fetch data from cache */
-					atomic_inc(&dmc->nr_jobs);
-					dmc->ssd_reads++;
-					dm_io_async_bvec(1, &job->cache, READ,
-							 bio->bi_io_vec + bio->bi_idx,
-							 flashcache_io_callback, job);
-					flashcache_unplug_device(dmc->cache_dev->bdev);
-				}
-			} else {
-				pjob = flashcache_alloc_pending_job(dmc);
-				if (unlikely(sysctl_flashcache_error_inject & READ_HIT_PENDING_JOB_ALLOC_FAIL)) {
-					if (pjob) {
-						flashcache_free_pending_job(pjob);
-						pjob = NULL;
-					}
-					sysctl_flashcache_error_inject &= ~READ_HIT_PENDING_JOB_ALLOC_FAIL;
-				}
-				if (pjob == NULL)
-					flashcache_bio_endio(bio, -EIO);
-				else
-					flashcache_enq_pending(dmc, bio, index, READCACHE, pjob);
-				spin_unlock_irq(&dmc->cache_spin_lock);
-			}
+			flashcache_read_hit(dmc, bio, index);
 			return;
 		}
 	}
@@ -1362,13 +1371,130 @@ out:
 }
 
 static void
+flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
+{
+	struct cacheblock *cacheblk;
+	struct kcached_job *job;
+	int queued;
+
+	cacheblk = &dmc->cache[index];
+	queued = flashcache_inval_blocks(dmc, bio);
+	if (queued) {
+		if (unlikely(queued < 0))
+			flashcache_bio_endio(bio, -EIO);
+		spin_unlock_irq(&dmc->cache_spin_lock);
+		return;
+	}
+	if (cacheblk->cache_state & VALID)
+		dmc->wr_replace++;
+	else
+		dmc->cached_blocks++;
+	cacheblk->cache_state = VALID | CACHEWRITEINPROG;
+	cacheblk->dbn = bio->bi_sector;
+	spin_unlock_irq(&dmc->cache_spin_lock);
+	job = new_kcached_job(dmc, bio, index);
+	if (unlikely(sysctl_flashcache_error_inject & WRITE_MISS_JOB_ALLOC_FAIL)) {
+		if (job)
+			flashcache_free_cache_job(job);
+		job = NULL;
+		sysctl_flashcache_error_inject &= ~WRITE_MISS_JOB_ALLOC_FAIL;
+	}
+	if (unlikely(job == NULL)) {
+		/* 
+		 * We have a write miss, and can't allocate a job.
+		 * Since we dropped the spinlock, we have to drain any 
+		 * pending jobs.
+		 */
+		DMERR("flashcache: Write (miss) failed ! Can't allocate memory for cache IO, block %lu", 
+		      cacheblk->dbn);
+		flashcache_bio_endio(bio, -EIO);
+		spin_lock_irq(&dmc->cache_spin_lock);
+		dmc->cached_blocks--;
+		cacheblk->cache_state &= ~VALID;
+		cacheblk->cache_state |= INVALID;
+		flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
+		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
+		spin_unlock_irq(&dmc->cache_spin_lock);
+	} else {
+		job->action = WRITECACHE; 
+		atomic_inc(&dmc->nr_jobs);
+		dmc->ssd_writes++;
+		dm_io_async_bvec(1, &job->cache, WRITE, 
+				 bio->bi_io_vec + bio->bi_idx,
+				 flashcache_io_callback, job);
+		flashcache_unplug_device(dmc->cache_dev->bdev);
+		flashcache_clean_set(dmc, index / dmc->assoc);
+	}
+}
+
+static void
+flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
+{
+	struct cacheblock *cacheblk;
+	struct pending_job *pjob;
+	struct kcached_job *job;
+
+	cacheblk = &dmc->cache[index];
+	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
+		if (cacheblk->cache_state & DIRTY)
+			dmc->dirty_write_hits++;
+		dmc->write_hits++;
+		cacheblk->cache_state |= CACHEWRITEINPROG;
+		spin_unlock_irq(&dmc->cache_spin_lock);
+		job = new_kcached_job(dmc, bio, index);
+		if (unlikely(sysctl_flashcache_error_inject & WRITE_HIT_JOB_ALLOC_FAIL)) {
+			if (job)
+				flashcache_free_cache_job(job);
+			job = NULL;
+			sysctl_flashcache_error_inject &= ~WRITE_HIT_JOB_ALLOC_FAIL;
+		}
+		if (unlikely(job == NULL)) {
+			/* 
+			 * We have a write hit, and can't allocate a job.
+			 * Since we dropped the spinlock, we have to drain any 
+			 * pending jobs.
+			 */
+			DMERR("flashcache: Write (hit) failed ! Can't allocate memory for cache IO, block %lu", 
+			      cacheblk->dbn);
+			flashcache_bio_endio(bio, -EIO);
+			spin_lock_irq(&dmc->cache_spin_lock);
+			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
+			cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
+			spin_unlock_irq(&dmc->cache_spin_lock);
+		} else {
+			job->action = WRITECACHE; /* Write data to the source device */
+			DPRINTK("Queue job for %llu", bio->bi_sector);
+			atomic_inc(&dmc->nr_jobs);
+			dmc->ssd_writes++;
+			dm_io_async_bvec(1, &job->cache, WRITE, 
+					 bio->bi_io_vec + bio->bi_idx,
+					 flashcache_io_callback, job);
+			flashcache_unplug_device(dmc->cache_dev->bdev);
+			flashcache_clean_set(dmc, index / dmc->assoc);
+		}
+	} else {
+		pjob = flashcache_alloc_pending_job(dmc);
+		if (unlikely(sysctl_flashcache_error_inject & WRITE_HIT_PENDING_JOB_ALLOC_FAIL)) {
+			if (pjob) {
+				flashcache_free_pending_job(pjob);
+				pjob = NULL;
+			}
+			sysctl_flashcache_error_inject &= ~WRITE_HIT_PENDING_JOB_ALLOC_FAIL;
+		}
+		if (unlikely(pjob == NULL))
+			flashcache_bio_endio(bio, -EIO);
+		else
+			flashcache_enq_pending(dmc, bio, index, WRITECACHE, pjob);
+		spin_unlock_irq(&dmc->cache_spin_lock);
+	}
+}
+
+static void
 flashcache_write(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
 	int res;
-	struct kcached_job *job;
 	struct cacheblock *cacheblk;
-	struct pending_job *pjob;
 	int queued;
 	
 	spin_lock_irq(&dmc->cache_spin_lock);
@@ -1385,107 +1511,11 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 		cacheblk = &dmc->cache[index];		
 		if ((cacheblk->cache_state & VALID) && 
 		    (cacheblk->dbn == bio->bi_sector)) {
-			if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
-				if (cacheblk->cache_state & DIRTY)
-					dmc->dirty_write_hits++;
-				dmc->write_hits++;
-				cacheblk->cache_state |= CACHEWRITEINPROG;
-				spin_unlock_irq(&dmc->cache_spin_lock);
-				job = new_kcached_job(dmc, bio, index);
-				if (unlikely(sysctl_flashcache_error_inject & WRITE_HIT_JOB_ALLOC_FAIL)) {
-					if (job)
-						flashcache_free_cache_job(job);
-					job = NULL;
-					sysctl_flashcache_error_inject &= ~WRITE_HIT_JOB_ALLOC_FAIL;
-				}
-				if (unlikely(job == NULL)) {
-					/* 
-					 * We have a write hit, and can't allocate a job.
-					 * Since we dropped the spinlock, we have to drain any 
-					 * pending jobs.
-					 */
-					DMERR("flashcache: Write (hit) failed ! Can't allocate memory for cache IO, block %lu", 
-					      cacheblk->dbn);
-					flashcache_bio_endio(bio, -EIO);
-					spin_lock_irq(&dmc->cache_spin_lock);
-					flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
-					cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
-					spin_unlock_irq(&dmc->cache_spin_lock);
-				} else {
-					job->action = WRITECACHE; /* Write data to the source device */
-					DPRINTK("Queue job for %llu", bio->bi_sector);
-					atomic_inc(&dmc->nr_jobs);
-					dmc->ssd_writes++;
-					dm_io_async_bvec(1, &job->cache, WRITE, 
-							 bio->bi_io_vec + bio->bi_idx,
-							 flashcache_io_callback, job);
-					flashcache_unplug_device(dmc->cache_dev->bdev);
-					flashcache_clean_set(dmc, index / dmc->assoc);
-				}
-			} else {
-				pjob = flashcache_alloc_pending_job(dmc);
-				if (unlikely(sysctl_flashcache_error_inject & WRITE_HIT_PENDING_JOB_ALLOC_FAIL)) {
-					if (pjob) {
-						flashcache_free_pending_job(pjob);
-						pjob = NULL;
-					}
-					sysctl_flashcache_error_inject &= ~WRITE_HIT_PENDING_JOB_ALLOC_FAIL;
-				}
-				if (unlikely(pjob == NULL))
-					flashcache_bio_endio(bio, -EIO);
-				else
-					flashcache_enq_pending(dmc, bio, index, WRITECACHE, pjob);
-				spin_unlock_irq(&dmc->cache_spin_lock);
-			}
-			return;
-		}
-		/* Cache Miss, found block to recycle */
-		queued = flashcache_inval_blocks(dmc, bio);
-		if (queued) {
-			if (unlikely(queued < 0))
-				flashcache_bio_endio(bio, -EIO);
-			spin_unlock_irq(&dmc->cache_spin_lock);
-			return;
-		}
-		if (cacheblk->cache_state & VALID)
-			dmc->wr_replace++;
-		else
-			dmc->cached_blocks++;
-		cacheblk->cache_state = VALID | CACHEWRITEINPROG;
-		cacheblk->dbn = bio->bi_sector;
-		spin_unlock_irq(&dmc->cache_spin_lock);
-		job = new_kcached_job(dmc, bio, index);
-		if (unlikely(sysctl_flashcache_error_inject & WRITE_MISS_JOB_ALLOC_FAIL)) {
-			if (job)
-				flashcache_free_cache_job(job);
-			job = NULL;
-			sysctl_flashcache_error_inject &= ~WRITE_MISS_JOB_ALLOC_FAIL;
-		}
-		if (unlikely(job == NULL)) {
-			/* 
-			 * We have a write miss, and can't allocate a job.
-			 * Since we dropped the spinlock, we have to drain any 
-			 * pending jobs.
-			 */
-			DMERR("flashcache: Write (miss) failed ! Can't allocate memory for cache IO, block %lu", 
-			      cacheblk->dbn);
-			flashcache_bio_endio(bio, -EIO);
-			spin_lock_irq(&dmc->cache_spin_lock);
-			dmc->cached_blocks--;
-			cacheblk->cache_state &= ~VALID;
-			cacheblk->cache_state |= INVALID;
-			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
-			cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
-			spin_unlock_irq(&dmc->cache_spin_lock);
+			/* Cache Hit */
+			flashcache_write_hit(dmc, bio, index);
 		} else {
-			job->action = WRITECACHE; 
-			atomic_inc(&dmc->nr_jobs);
-			dmc->ssd_writes++;
-			dm_io_async_bvec(1, &job->cache, WRITE, 
-					 bio->bi_io_vec + bio->bi_idx,
-					 flashcache_io_callback, job);
-			flashcache_unplug_device(dmc->cache_dev->bdev);
-			flashcache_clean_set(dmc, index / dmc->assoc);
+			/* Cache Miss, found block to recycle */
+			flashcache_write_miss(dmc, bio, index);
 		}
 		return;
 	}
