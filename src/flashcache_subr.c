@@ -442,48 +442,46 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	for (ix = 0 ; ix < nr_set_dirty ; ix++) {
 		struct cacheblock *cacheblk = &dmc->cache[set_dirty_list[ix].index];
 		int back_merge, k;
-		
+		int i;
+
 		back_merge = -1;
-		if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
-			int i;
-			
-			for (i = 0 ; i < *nr_writes ; i++) {
-				int insert;
-				int j = 0;
+		VERIFY((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY);
+		for (i = 0 ; i < *nr_writes ; i++) {
+			int insert;
+			int j = 0;
 				
-				insert = 0;
-				if (cacheblk->dbn + dmc->block_size == writes_list[i].dbn) {
-					/* cacheblk to be inserted above i */
-					insert = 1;
-					j = i;
-					back_merge = j;
-				}
-				if (cacheblk->dbn - dmc->block_size == writes_list[i].dbn ) {
-					/* cacheblk to be inserted after i */
-					insert = 1;
-					j = i + 1;
-				}
-				VERIFY(j < dmc->assoc);
-				if (insert) {
-					cacheblk->cache_state |= DISKWRITEINPROG;
-					/* 
-					 * Shift down everthing from j to ((*nr_writes) - 1) to
-					 * make room for the new entry. And add the new entry.
-					 */
-					for (k = (*nr_writes) - 1 ; k >= j ; k--)
-						writes_list[k + 1] = writes_list[k];
-					writes_list[j].dbn = cacheblk->dbn;
-					writes_list[j].index = cacheblk - &dmc->cache[0];
-					(*nr_writes)++;
-					VERIFY(*nr_writes <= dmc->assoc);
-					new_inserts++;
-					if (back_merge == -1)
-						dmc->front_merge++;
-					else
-						dmc->back_merge++;
-					VERIFY(*nr_writes <= dmc->assoc);
-					break;
-				}
+			insert = 0;
+			if (cacheblk->dbn + dmc->block_size == writes_list[i].dbn) {
+				/* cacheblk to be inserted above i */
+				insert = 1;
+				j = i;
+				back_merge = j;
+			}
+			if (cacheblk->dbn - dmc->block_size == writes_list[i].dbn ) {
+				/* cacheblk to be inserted after i */
+				insert = 1;
+				j = i + 1;
+			}
+			VERIFY(j < dmc->assoc);
+			if (insert) {
+				cacheblk->cache_state |= DISKWRITEINPROG;
+				/* 
+				 * Shift down everthing from j to ((*nr_writes) - 1) to
+				 * make room for the new entry. And add the new entry.
+				 */
+				for (k = (*nr_writes) - 1 ; k >= j ; k--)
+					writes_list[k + 1] = writes_list[k];
+				writes_list[j].dbn = cacheblk->dbn;
+				writes_list[j].index = cacheblk - &dmc->cache[0];
+				(*nr_writes)++;
+				VERIFY(*nr_writes <= dmc->assoc);
+				new_inserts++;
+				if (back_merge == -1)
+					dmc->front_merge++;
+				else
+					dmc->back_merge++;
+				VERIFY(*nr_writes <= dmc->assoc);
+				break;
 			}
 		}
 		/*
