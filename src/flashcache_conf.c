@@ -1604,15 +1604,15 @@ static void
 flashcache_status_table(struct cache_c *dmc, status_type_t type,
 			     char *result, unsigned int maxlen)
 {
-	int cache_pct, dirty_pct;
+	float cache_pct, dirty_pct;
 	int i;
 	int sz = 0; /* DMEMIT */
 	int nr_queued = 0;
 	unsigned long flags;
 
 	if (dmc->size > 0) {
-		dirty_pct = (dmc->nr_dirty * 100) / dmc->size;
-		cache_pct = (dmc->cached_blocks * 100) / dmc->size;
+		dirty_pct = (dmc->nr_dirty * 100.0) / dmc->size;
+		cache_pct = (dmc->cached_blocks * 100.0) / dmc->size;
 	} else {
 		cache_pct = 0;
 		dirty_pct = 0;
@@ -1626,7 +1626,7 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, 
-	       cache_pct, dmc->nr_dirty, dirty_pct);
+	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	for (i = 0 ; i < dmc->size ; i++)
 		nr_queued += dmc->cache[i].nr_queued;
