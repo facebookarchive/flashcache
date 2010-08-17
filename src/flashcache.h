@@ -235,7 +235,7 @@ struct cache_c {
 	struct flashcache_cachectl_pid *whitelist_head, *whitelist_tail;
 	int num_blacklist_pids, num_whitelist_pids;
 	unsigned long blacklist_expire_check, whitelist_expire_check;
-
+	
 	struct cache_c	*next_cache;
 
 	char cache_devname[DEV_PATHLEN];
@@ -422,14 +422,6 @@ int flashcache_map(struct dm_target *ti, struct bio *bio,
 int flashcache_ctr(struct dm_target *ti, unsigned int argc,
 		   char **argv);
 void flashcache_dtr(struct dm_target *ti);
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
-int flashcache_ioctl(struct dm_target *ti, struct inode *inode,
-		     struct file *filp, unsigned int cmd,
-		     unsigned long arg);
-#else
-int flashcache_ioctl(struct dm_target *ti, unsigned int cmd,
- 		     unsigned long arg);
-#endif
 
 int flashcache_status(struct dm_target *ti, status_type_t type,
 		      char *result, unsigned int maxlen);
@@ -472,7 +464,6 @@ void flashcache_do_readfill(struct work_struct *work);
 void flashcache_uncached_io_complete(struct kcached_job *job);
 void flashcache_clean_set(struct cache_c *dmc, int set);
 void flashcache_sync_all(struct cache_c *dmc);
-void flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force);
 void flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 

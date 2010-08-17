@@ -57,6 +57,7 @@
 #endif
 
 #include "flashcache.h"
+#include "flashcache_ioctl.h"
 
 int sysctl_flashcache_reclaim_policy = FLASHCACHE_FIFO;
 int sysctl_flashcache_write_merge = 1;

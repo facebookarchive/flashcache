@@ -2,7 +2,7 @@ EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./
 UTILS_CFLAGS=-I./
 
 obj-m += flashcache.o
-flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o
+flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o
 
 all:
 	make -C $(KERNEL_TREE) M=$(PWD) modules
