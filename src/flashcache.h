@@ -202,6 +202,7 @@ struct cache_c {
 	unsigned long uncached_reads, uncached_writes;
 	unsigned long disk_reads, disk_writes;
 	unsigned long ssd_reads, ssd_writes;
+	unsigned long ssd_readfills, ssd_readfill_unplugs;
 
 	unsigned long clean_set_calls;
 	unsigned long clean_set_less_dirty;
@@ -222,6 +223,11 @@ struct cache_c {
 #else
 	struct delayed_work delayed_clean;
 #endif
+
+	/* State for doing readfills (batch writes to ssd) */
+	int readfill_in_prog;
+	struct kcached_job *readfill_queue;
+	struct work_struct readfill_wq;
 
 	unsigned long pid_expire_check;
 
@@ -458,7 +464,11 @@ int flashcache_md_complete_empty(void);
 void flashcache_md_write_done(struct kcached_job *job);
 void flashcache_do_pending(struct kcached_job *job);
 void flashcache_md_write(struct kcached_job *job);
-void flashcache_do_io(struct kcached_job *job);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+void flashcache_do_readfill(struct cache_c *dmc);
+#else
+void flashcache_do_readfill(struct work_struct *work);
+#endif
 void flashcache_uncached_io_complete(struct kcached_job *job);
 void flashcache_clean_set(struct cache_c *dmc, int set);
 void flashcache_sync_all(struct cache_c *dmc);

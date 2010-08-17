@@ -84,6 +84,8 @@ static void flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid,
 static void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
 static int flashcache_uncacheable(struct cache_c *dmc);
 static void flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio);
+static void flashcache_enqueue_readfill(struct cache_c *dmc, 
+					struct kcached_job *job);
 
 extern struct work_struct _kcached_wq;
 extern u_int64_t size_hist[];
@@ -149,8 +151,7 @@ flashcache_io_callback(unsigned long error, void *context)
 		if (likely(error == 0)) {
 			/* Kick off the write to the cache */
 			job->action = READFILL;
-			push_io(job);
-			schedule_work(&_kcached_wq);
+			flashcache_enqueue_readfill(dmc, job);
 			return;
 		} else {
 			dmc->disk_read_errors++;			
@@ -375,23 +376,80 @@ flashcache_do_pending(struct kcached_job *job)
 		flashcache_do_pending_noerror(job);
 }
 
-void
-flashcache_do_io(struct kcached_job *job)
+/*
+ * Cache miss support. We read the data from disk, write it to the ssd.
+ * To avoid doing 1 IO at a time to the ssd, when the IO is kicked off, 
+ * we enqueue it to a "readfill" queue in the cache in cache sector order.
+ * The worker thread can then issue all of these IOs and do 1 unplug to 
+ * start them all.
+ */
+static void
+flashcache_enqueue_readfill(struct cache_c *dmc, struct kcached_job *job)
 {
-	int r = 0;
-	struct bio *bio = job->bio;
+	unsigned long flags;
+	struct kcached_job **j1, *next;
+	int do_schedule = 0;
 
-	VERIFY(job->action == READFILL);
-	/* Write to cache device */
-#ifdef FLASHCACHE_DO_CHECKSUMS
-	flashcache_store_checksum(job);
-	job->dmc->checksum_store++;
+	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	/* Insert job in sorted order of cache sector */
+	j1 = &dmc->readfill_queue;
+	while (*j1 != NULL && (*j1)->cache.sector < job->cache.sector)
+		j1 = &(*j1)->next;
+	next = *j1;
+	*j1 = job;
+	job->next = next;
+	do_schedule = (dmc->readfill_in_prog == 0);
+	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);	
+	if (do_schedule)
+		schedule_work(&dmc->readfill_wq);
+}
+
+void 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+flashcache_do_readfill(struct cache_c *dmc)
+#else
+flashcache_do_readfill(struct work_struct *work)
 #endif
-	job->dmc->ssd_writes++;
-	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
-			     flashcache_io_callback, job);
-	flashcache_unplug_device(job->dmc->cache_dev->bdev);
-	VERIFY(r == 0); /* In our case, dm_io_async_bvec() must always return 0 */
+{
+	struct kcached_job *job, *joblist;
+	int r = 0;
+	struct bio *bio;
+	unsigned long flags;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,20)
+	struct cache_c *dmc = container_of(work, struct cache_c, readfill_wq);
+#endif
+
+	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	if (dmc->readfill_in_prog)
+		goto out;
+	dmc->readfill_in_prog = 1;
+	while (dmc->readfill_queue != NULL) {
+		joblist = dmc->readfill_queue;
+		dmc->readfill_queue = NULL;
+		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+		for (job = joblist ; job != NULL ; job = job->next) {
+			VERIFY(job->action == READFILL);
+			/* Write to cache device */
+#ifdef FLASHCACHE_DO_CHECKSUMS
+			flashcache_store_checksum(job);
+			dmc->checksum_store++;
+#endif
+			dmc->ssd_writes++;
+			dmc->ssd_readfills++;
+			bio = job->bio;
+			r = dm_io_async_bvec(1, &job->cache, WRITE, 
+					     bio->bi_io_vec + bio->bi_idx,
+					     flashcache_io_callback, job);
+			/* In our case, dm_io_async_bvec() must always return 0 */
+			VERIFY(r == 0);
+		}
+		dmc->ssd_readfill_unplugs++;
+		flashcache_unplug_device(dmc->cache_dev->bdev);
+		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	}
+	dmc->readfill_in_prog = 0;
+out:
+	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);	
 }
 
 /*
@@ -2219,7 +2277,7 @@ EXPORT_SYMBOL(flashcache_io_callback);
 EXPORT_SYMBOL(flashcache_do_pending_error);
 EXPORT_SYMBOL(flashcache_do_pending_noerror);
 EXPORT_SYMBOL(flashcache_do_pending);
-EXPORT_SYMBOL(flashcache_do_io);
+EXPORT_SYMBOL(flashcache_do_readfill);
 EXPORT_SYMBOL(flashcache_map);
 EXPORT_SYMBOL(flashcache_write);
 EXPORT_SYMBOL(flashcache_inval_blocks);
