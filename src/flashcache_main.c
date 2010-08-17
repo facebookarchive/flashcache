@@ -119,7 +119,6 @@ static int dm_io_async_bvec(unsigned int num_regions,
 }
 #endif
 
-
 void 
 flashcache_io_callback(unsigned long error, void *context)
 {
@@ -299,7 +298,6 @@ flashcache_do_pending_error(struct kcached_job *job)
 	flashcache_free_cache_job(job);
 	if (atomic_dec_and_test(&dmc->nr_jobs))
 		wake_up(&dmc->destroyq);
-
 }
 
 static void
@@ -504,16 +502,7 @@ find_invalid_dbn(struct cache_c *dmc, int start_index)
 	return -1;
 }
 
-/* 
- * Search for a slot that we can reclaim.
- * The strategy is ~FIFO right now. sweep thru the set looking for
- * a block to recycle.
- * But we can come up with at least 2 other (configurable at cache create
- * time alternatives) for future.
- * LRU within a set : Maintain either a timestamp per block and do 
- * approximated LRU within each set. Or chain the LRU blocks within a 
- * set.
- */
+/* Search for a slot that we can reclaim */
 static void
 find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 {
