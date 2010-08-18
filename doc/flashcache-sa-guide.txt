@@ -61,7 +61,7 @@ flashcache_destroy /dev/sdc
 Destroy the existing cache on /dev/sdc. All data is lost !!!
 
 Removing a flashcache volume :
-----------------------------
+============================
 Use dmsetup remove to remove a flashcache volume. Note that the 
 default behavior on a remove is to clean all dirty cacheblock to
 disk. The remove will not return until all blocks are cleaned.
@@ -267,3 +267,83 @@ corrupt data here.
 You can work around this by setting file permissions on files in 
 the flashcache volume appropriately.
 
+Tuning XFS for better flashcache performance :
+============================================
+If you run XFS/Flashcache, it is worth tuning XFS' allocation group
+parameters (agsize/agcount) to achieve better flashcache performance.
+XFS allocates blocks for files in a given directory in a new
+allocation group. By tuning agsize and agcount (mkfs.xfs parameters),
+we can achieve much better distribution of blocks across
+flashcache. Better distribution of blocks across flashcache will
+increase collisions on flashcache sets considerably, increase cache
+hit rates significantly and result in lower IO latencies.
+
+We can achieve this by computing agsize (and implicitly agcount) using
+these equations,
+
+C = Cache size, 
+V = Size of filesystem Volume.
+
+agsize % C = (1/agcount)*C
+agsize * agcount ~= V
+
+where agsize <= 1000g (XFS limits on agsize).
+
+A couple of examples that illustrate the formula,
+
+For agcount = 4, let's divide up the cache into 4 equal parts (each
+part is size C/agcount). Let's call the parts C1, C2, C3, C4. One
+ideal way to map the allocation groups onto the cache is as follows.
+
+Ag1	     Ag2	Ag3	       Ag4
+--	     --		--	       --
+C1	     C2		C3	       C4	(stripe 1)
+C2	     C3		C4	       C1	(stripe 2)
+C3	     C4		C1	       C2	(stripe 3)
+C4	     C1		C2	       C3	(stripe 4)
+C1	     C2		C3	       C4	(stripe 5)
+
+In this simple example, note that each "stripe" has 2 properties
+1) Each element of the stripe is a unique part of the cache.
+2) The union of all the parts for a stripe gives us the entire cache.
+
+Clearly, this is an ideal mapping, from a distribution across the
+cache point of view.
+
+Another example, this time with agcount = 5, the cache is divided into
+5 equal parts C1, .. C5.
+
+Ag1	     Ag2	Ag3	       Ag4	Ag5
+--	     --		--	       --	--
+C1	     C2		C3	       C4	C5	(stripe 1)
+C2	     C3		C4	       C5	C1	(stripe 2)
+C3	     C4		C5	       C1	C2	(stripe 3)
+C4	     C5		C1	       C2	C3	(stripe 4)
+C5	     C1		C2	       C3	C4	(stripe 5)
+C1	     C2		C3	       C4	C5	(stripe 6)
+
+A couple of examples that compute the optimal agsize for a given
+Cachesize and Filesystem volume size.
+
+a) C = 600g, V = 3,5TB
+Consider agcount = 5
+
+agsize % 600 = (1/5)*600
+agsize % 600 = 120
+
+So an agsize of 720g would work well, and 720*5 = 3.6TB (~ 3.5TB)
+
+b) C = 150g, V = 3.5TB
+Consider agcount=4
+
+agsize % 150 = (1/5)*150
+agsize % 150 = 37.5
+
+So an agsize of 937g would work well, and 937*4 = 3.7TB (~ 3.5TB)
+
+As an alternative, 
+
+agsize % C = (1 - (1/agcount))*C
+agsize * agcount ~= V
+
+Works just as well as the formula above.
