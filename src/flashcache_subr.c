@@ -300,7 +300,7 @@ do_work(struct work_struct *unused)
 {
 	process_jobs(&_md_complete_jobs, flashcache_md_write_done);
 	process_jobs(&_pending_jobs, flashcache_do_pending);
-	process_jobs(&_md_io_jobs, flashcache_md_write);
+	process_jobs(&_md_io_jobs, flashcache_md_write_kickoff);
 	process_jobs(&_uncached_io_complete_jobs, flashcache_uncached_io_complete);
 }
 

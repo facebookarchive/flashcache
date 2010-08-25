@@ -203,15 +203,13 @@ flashcache_io_callback(unsigned long error, void *context)
 			 * We need to update the metadata on a DIRTY->DIRTY as well 
 			 * since we save the checksums.
 			 */
-			push_md_io(job);
-			schedule_work(&_kcached_wq);
+			flashcache_md_write(job);
 			return;
 #else
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 			/* Only do cache metadata update on a non-DIRTY->DIRTY transition */
 			if ((cacheblk->cache_state & DIRTY) == 0) {
-				push_md_io(job);
-				schedule_work(&_kcached_wq);
+				flashcache_md_write(job);
 				return;
 			}
 #endif
@@ -657,7 +655,7 @@ flashcache_free_md_sector(struct kcached_job *job)
 		__free_page(job->md_io_bvec.bv_page);
 }
 
-static void
+void
 flashcache_md_write_kickoff(struct kcached_job *job)
 {
 	struct cache_c *dmc = job->dmc;	
@@ -684,8 +682,8 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	 * Transfer whatever is on the pending queue to the md_io_inprog queue.
 	 */
 	md_sector_head = &dmc->md_sectors_buf[INDEX_TO_MD_SECTOR(job->index)];
-	md_sector_head->md_io_inprog = md_sector_head->pending_jobs;
-	md_sector_head->pending_jobs = NULL;
+	md_sector_head->md_io_inprog = md_sector_head->queued_updates;
+	md_sector_head->queued_updates = NULL;
 	md_sector = job->md_sector;
 	md_sector_ix = INDEX_TO_MD_SECTOR(job->index) * MD_BLOCKS_PER_SECTOR;
 	/* First copy out the entire sector */
@@ -712,6 +710,7 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	for (job = md_sector_head->md_io_inprog ; 
 	     job != NULL ;
 	     job = job->next) {
+		dmc->md_write_batch++;
 		if (job->action == WRITECACHE) {
 			/* DIRTY the cache block */
 			md_sector[INDEX_TO_MD_SECTOR_OFFSET(job->index)].cache_state = 
@@ -726,6 +725,7 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	where.count = 1;
 	where.sector = 1 + INDEX_TO_MD_SECTOR(orig_job->index);
 	dmc->ssd_writes++;
+	dmc->md_ssd_writes++;
 	dm_io_async_bvec(1, &where, WRITE,
 			 &orig_job->md_io_bvec,
 			 flashcache_md_write_callback, orig_job);
@@ -843,10 +843,10 @@ flashcache_md_write_done(struct kcached_job *job)
 		}
 	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	if (md_sector_head->pending_jobs != NULL) {
+	if (md_sector_head->queued_updates != NULL) {
 		/* peel off the first job from the pending queue and kick that off */
-		job = md_sector_head->pending_jobs;
-		md_sector_head->pending_jobs = job->next;
+		job = md_sector_head->queued_updates;
+		md_sector_head->queued_updates = job->next;
 		job->next = NULL;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		VERIFY(job->action == WRITEDISK || job->action == WRITECACHE ||
@@ -866,7 +866,7 @@ flashcache_md_write_done(struct kcached_job *job)
  * on the pending_jobs list of the md sector bufhead. When kicking off an IO, we
  * cluster all these pending updates and do all of them as 1 flash write (that 
  * logic is in md_write_kickoff), where it switches out the entire pending_jobs
- * list and does all of those updates.
+ * list and does all of those updates as 1 ssd write.
  */
 void
 flashcache_md_write(struct kcached_job *job)
@@ -875,7 +875,6 @@ flashcache_md_write(struct kcached_job *job)
 	struct cache_md_sector_head *md_sector_head;
 	unsigned long flags;
 	
-	VERIFY(!in_interrupt());
 	VERIFY(job->action == WRITEDISK || job->action == WRITECACHE || 
 	       job->action == WRITEDISK_SYNC);
 	md_sector_head = &dmc->md_sectors_buf[INDEX_TO_MD_SECTOR(job->index)];
@@ -885,7 +884,7 @@ flashcache_md_write(struct kcached_job *job)
 		struct kcached_job **nodepp;
 		
 		/* A MD update is already in progress, queue this one up for later */
-		nodepp = &md_sector_head->pending_jobs;
+		nodepp = &md_sector_head->queued_updates;
 		while (*nodepp != NULL)
 			nodepp = &((*nodepp)->next);
 		job->next = NULL;
@@ -894,7 +893,16 @@ flashcache_md_write(struct kcached_job *job)
 	} else {
 		md_sector_head->nr_in_prog = 1;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		flashcache_md_write_kickoff(job);
+		/*
+		 * If !in_interrupt, we can kick off the write(s) immediately.
+		 * Else punt for the worker thread.
+		 */
+		if (!in_interrupt()) {
+			flashcache_md_write_kickoff(job);
+		} else {
+			push_md_io(job);
+			schedule_work(&_kcached_wq);
+		}
 	}
 }
 

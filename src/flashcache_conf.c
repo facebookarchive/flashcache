@@ -1339,7 +1339,7 @@ init:
 
 	for (i = 0 ; i < dmc->md_sectors - 1 ; i++) {
 		dmc->md_sectors_buf[i].nr_in_prog = 0;
-		dmc->md_sectors_buf[i].pending_jobs = NULL;
+		dmc->md_sectors_buf[i].queued_updates = NULL;
 	}
 
 	spin_lock_init(&dmc->cache_spin_lock);
@@ -1425,6 +1425,8 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->noroom = 0;
 	dmc->md_write_dirty = 0;
 	dmc->md_write_clean = 0;
+	dmc->md_write_batch = 0;
+	dmc->md_ssd_writes = 0;
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	dmc->checksum_store = 0;
 	dmc->checksum_valid = 0;
@@ -1564,6 +1566,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
+	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
@@ -1576,6 +1579,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
+	       dmc->md_write_batch, dmc->md_ssd_writes,
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes,
@@ -1585,21 +1589,23 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
 	       "\twrite hits(%lu) write hit percent(%d)\n" 		\
 	       "\tdirty write hits(%lu) dirty write hit percent(%d)\n" 	\
-	       "\treplacement(%lu), write replacement(%lu)\n"		\
-	       "\twrite invalidates(%lu), read invalidates(%lu)\n"	\
-	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
-	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
-	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
-	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
-	       "\treadfills(%lu), readfill unplugs(%lu)\n" \
-	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+	       "\treplacement(%lu) write replacement(%lu)\n"		\
+	       "\twrite invalidates(%lu) read invalidates(%lu)\n"	\
+	       "\tpending enqueues(%lu) pending inval(%lu)\n"		\
+	       "\tmetadata dirties(%lu) metadata cleans(%lu)\n" \
+	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
+	       "\tcleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
+	       "\tuncached reads(%lu) uncached writes(%lu)\n" \
+	       "\treadfills(%lu) readfill unplugs(%lu)\n" \
+	       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
 	       dmc->dirty_write_hits, dirty_write_hit_pct,
 	       dmc->replace, dmc->wr_replace, dmc->wr_invalidates, dmc->rd_invalidates,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
+	       dmc->md_write_batch, dmc->md_ssd_writes,
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes,

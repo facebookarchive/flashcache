@@ -194,6 +194,8 @@ struct cache_c {
 	unsigned long noroom;		/* No room in set */
 	unsigned long md_write_dirty;	/* Metadata sector writes dirtying block */
 	unsigned long md_write_clean;	/* Metadata sector writes cleaning block */
+	unsigned long md_write_batch;	/* How many md updates did we batch ? */
+	unsigned long md_ssd_writes;	/* How many md ssd writes did we do ? */
 	unsigned long pid_drops;
 	unsigned long pid_adds;
 	unsigned long pid_dels;
@@ -349,7 +351,7 @@ struct flash_cacheblock {
  */
 struct cache_md_sector_head {
 	u_int32_t		nr_in_prog;
-	struct kcached_job	*pending_jobs, *md_io_inprog;
+	struct kcached_job	*queued_updates, *md_io_inprog;
 };
 
 #define MIN_JOBS 1024
@@ -456,6 +458,7 @@ int flashcache_md_complete_empty(void);
 void flashcache_md_write_done(struct kcached_job *job);
 void flashcache_do_pending(struct kcached_job *job);
 void flashcache_md_write(struct kcached_job *job);
+void flashcache_md_write_kickoff(struct kcached_job *job);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 void flashcache_do_readfill(struct cache_c *dmc);
 #else
