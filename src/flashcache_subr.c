@@ -38,6 +38,7 @@
 #include <linux/sysctl.h>
 #include <linux/version.h>
 #include <linux/sort.h>
+#include <asm/kmap_types.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
@@ -175,17 +176,23 @@ flashcache_compute_checksum(struct bio *bio)
 	int i;	
 	u_int64_t sum = 0, *idx;
 	int cnt;
+	int kmap_type;
+	void *kvaddr;
 
+	if (in_interrupt())
+		kmap_type = KM_SOFTIRQ0;
+	else
+		kmap_type = KM_USER0;
 	for (i = bio->bi_idx ; i < bio->bi_vcnt ; i++) {
+		kvaddr = kmap_atomic(bio->bi_io_vec[i].bv_page, kmap_type);
 		idx = (u_int64_t *)
-			(kmap(bio->bi_io_vec[i].bv_page) + 
-			 bio->bi_io_vec[i].bv_offset);
+			((char *)kvaddr + bio->bi_io_vec[i].bv_offset);
 		cnt = bio->bi_io_vec[i].bv_len;
 		while (cnt > 0) {
 			sum += *idx++;
 			cnt -= sizeof(u_int64_t);
 		}
-		kunmap(bio->bi_io_vec[i].bv_page);
+		kunmap_atomic(kvaddr, kmap_type);
 	}
 	return sum;
 }

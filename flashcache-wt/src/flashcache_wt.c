@@ -38,6 +38,8 @@
 #include <linux/version.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/hardirq.h>
+#include <asm/kmap_types.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 #include "dm.h"
@@ -91,12 +93,7 @@ static int dm_io_async_bvec(unsigned int num_regions,
 	struct cache_c *dmc = job->dmc;
 	struct dm_io_request iorq;
 
-#if 0
-	/* XXX - Why hint SYNCIO ? */
-	iorq.bi_rw = (rw | (1 << BIO_RW_SYNCIO));
-#else
 	iorq.bi_rw = rw;
-#endif
 	iorq.mem.type = DM_IO_BVEC;
 	iorq.mem.ptr.bvec = bvec;
 	iorq.notify.fn = fn;
@@ -113,16 +110,23 @@ flashcache_wt_compute_checksum(struct bio *bio)
 	int i;	
 	u_int64_t sum = 0, *idx;
 	int cnt;
+	int kmap_type;
+	void *kvaddr;
 
+	if (in_interrupt())
+		kmap_type = KM_SOFTIRQ0;
+	else
+		kmap_type = KM_USER0;
 	for (i = bio->bi_idx ; i < bio->bi_vcnt ; i++) {
+		kvaddr = kmap_atomic(bio->bi_io_vec[i].bv_page, kmap_type);
 		idx = (u_int64_t *)
-			(kmap(bio->bi_io_vec[i].bv_page) + bio->bi_io_vec[i].bv_offset);
+			((char *)kvaddr + bio->bi_io_vec[i].bv_offset);
 		cnt = bio->bi_io_vec[i].bv_len;
 		while (cnt > 0) {
 			sum += *idx++;
 			cnt -= sizeof(u_int64_t);
 		}
-		kunmap(bio->bi_io_vec[i].bv_page);
+		kunmap_atomic(kvaddr, kmap_type);
 	}
 	return sum;
 }
@@ -163,12 +167,12 @@ static int
 jobs_init(void)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-	_job_cache = kmem_cache_create("kcached-jobs",
+	_job_cache = kmem_cache_create("kcached-jobs-wt",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL, NULL);
 #else
-	_job_cache = kmem_cache_create("kcached-jobs",
+	_job_cache = kmem_cache_create("kcached-jobs-wt",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL);
