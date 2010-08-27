@@ -226,7 +226,7 @@ flashcache_io_callback(unsigned long error, void *context)
 	 * add it to the pending req queue.
 	 */
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	if (unlikely(error || cacheblk->head)) {
+	if (unlikely(error || cacheblk->nr_queued > 0)) {
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		push_pending(job);
 		schedule_work(&_kcached_wq);
@@ -243,12 +243,13 @@ static void
 flashcache_free_pending_jobs(struct cache_c *dmc, struct cacheblock *cacheblk, 
 			     int error)
 {
-	struct pending_job *pending_job;
+	struct pending_job *pending_job, *freelist = NULL;
 
 	VERIFY(spin_is_locked(&dmc->cache_spin_lock));
-	while (cacheblk->head) {
-		pending_job = cacheblk->head;
-		cacheblk->head = pending_job->next;
+	freelist = flashcache_deq_pending(dmc, cacheblk - &dmc->cache[0]);
+	while (freelist != NULL) {
+		pending_job = freelist;
+		freelist = pending_job->next;
 		VERIFY(cacheblk->nr_queued > 0);
 		cacheblk->nr_queued--;
 		flashcache_bio_endio(pending_job->bio, error);
@@ -295,7 +296,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 	struct cache_c *dmc = job->dmc;
 	int index = job->index;
 	unsigned long flags;
-	struct pending_job *pending_job;
+	struct pending_job *pending_job, *freelist;
 	int queued;
 	struct cacheblock *cacheblk = &dmc->cache[index];
 
@@ -314,10 +315,11 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 	dmc->pending_inval++;
 	cacheblk->cache_state &= ~VALID;
 	cacheblk->cache_state |= INVALID;
-	while (cacheblk->head) {
+	freelist = flashcache_deq_pending(dmc, cacheblk - &dmc->cache[0]);
+	while (freelist != NULL) {
 		VERIFY(!(cacheblk->cache_state & DIRTY));
-		pending_job = cacheblk->head;
-		cacheblk->head = pending_job->next;
+		pending_job = freelist;
+		freelist = pending_job->next;
 		VERIFY(cacheblk->nr_queued > 0);
 		cacheblk->nr_queued--;
 		if (pending_job->action == INVALIDATE) {
@@ -593,26 +595,6 @@ flashcache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 	}
 }
 
-static void 
-flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
-		       int index, int action, struct pending_job *job)
-{
-	struct pending_job **nodepp;
-
-	DPRINTK("flashcache_enq_pending: Queue to pending Q Index %d %llu",
-		index, bio->bi_sector);
-	VERIFY(job != NULL);
-	job->action = action;
-	job->next = NULL;
-	job->bio = bio;
-	nodepp = &dmc->cache[index].head;
-	while (*nodepp != NULL)
-		nodepp = &((*nodepp)->next);
-	*nodepp = job;
-	dmc->cache[index].nr_queued++;
-	dmc->enqueues++;
-}
-
 /*
  * Cache Metadata Update functions 
  */
@@ -774,7 +756,7 @@ flashcache_md_write_done(struct kcached_job *job)
 			} else
 				dmc->ssd_write_errors++;
 			flashcache_bio_endio(job->bio, job->error);
-			if (job->error || cacheblk->head) {
+			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
 					DMERR("flashcache: WRITE: Cache metadata write failed ! error %d block %lu", 
 					      -job->error, cacheblk->dbn);
@@ -813,7 +795,7 @@ flashcache_md_write_done(struct kcached_job *job)
 			VERIFY(dmc->clean_inprog > 0);
 			dmc->cache_sets[index / dmc->assoc].clean_inprog--;
 			dmc->clean_inprog--;
-			if (job->error || cacheblk->head) {
+			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
 					DMERR("flashcache: CLEAN: Cache metadata write failed ! error %d block %lu", 
 					      -job->error, cacheblk->dbn);
@@ -1131,7 +1113,7 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 	struct pending_job *pjob;
 
 	cacheblk = &dmc->cache[index];
-	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
+	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->nr_queued == 0)) {
 		struct kcached_job *job;
 			
 		cacheblk->cache_state |= CACHEREADINPROG;
@@ -1324,7 +1306,7 @@ flashcache_inval_block_set(struct cache_c *dmc, int set, struct bio *bio, int rw
 			else
 				dmc->rd_invalidates++;
 			if (!(cacheblk->cache_state & (BLOCK_IO_INPROG | DIRTY)) &&
-			    (cacheblk->head == NULL)) {
+			    (cacheblk->nr_queued == 0)) {
 				dmc->cached_blocks--;			
 				DPRINTK("Cache invalidate (!BUSY): Block %llu %lx",
 					start_dbn, cacheblk->cache_state);
@@ -1481,7 +1463,7 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 	struct kcached_job *job;
 
 	cacheblk = &dmc->cache[index];
-	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->head == NULL)) {
+	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->nr_queued == 0)) {
 		if (cacheblk->cache_state & DIRTY)
 			dmc->dirty_write_hits++;
 		dmc->write_hits++;
@@ -1918,7 +1900,6 @@ EXPORT_SYMBOL(flashcache_read_miss);
 EXPORT_SYMBOL(flashcache_clean_set);
 EXPORT_SYMBOL(flashcache_dirty_writeback);
 EXPORT_SYMBOL(flashcache_kcopyd_callback);
-EXPORT_SYMBOL(flashcache_enq_pending);
 EXPORT_SYMBOL(flashcache_lookup);
 EXPORT_SYMBOL(flashcache_alloc_md_sector);
 EXPORT_SYMBOL(flashcache_free_md_sector);
