@@ -117,7 +117,6 @@ struct cacheblock {
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	u_int64_t 	checksum;
 #endif
-	struct pending_job *head;
 };
 
 struct cache_set {
@@ -212,6 +211,7 @@ struct cache_c {
 	unsigned long clean_set_ios;
 	unsigned long set_limit_reached;
 	unsigned long total_limit_reached;
+	unsigned long pending_jobs_count;
 
 	/* Errors */
 	int	disk_read_errors;
@@ -237,6 +237,9 @@ struct cache_c {
 	struct flashcache_cachectl_pid *whitelist_head, *whitelist_tail;
 	int num_blacklist_pids, num_whitelist_pids;
 	unsigned long blacklist_expire_check, whitelist_expire_check;
+
+#define PENDING_JOB_HASH_SIZE		32
+	struct pending_job *pending_job_hashbuckets[PENDING_JOB_HASH_SIZE];
 	
 	struct cache_c	*next_cache;
 
@@ -274,8 +277,9 @@ struct kcached_job {
 
 struct pending_job {
 	struct bio *bio;
-	int    action;	
-	struct pending_job *next;
+	int	action;	
+	int	index;
+	struct pending_job *prev, *next;
 };
 #endif /* __KERNEL__ */
 
@@ -479,6 +483,9 @@ int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where,
 #endif
 void flashcache_update_sync_progress(struct cache_c *dmc);
 void flashcache_unplug_device(struct block_device *bdev);
+void flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
+			    int index, int action, struct pending_job *job);
+struct pending_job *flashcache_deq_pending(struct cache_c *dmc, int index);
 
 #endif /* __KERNEL__ */
 

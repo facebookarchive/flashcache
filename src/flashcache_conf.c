@@ -782,7 +782,6 @@ flashcache_md_create(struct cache_c *dmc, int force)
 		dmc->cache[i].checksum = 0;
 #endif
 		dmc->cache[i].cache_state = INVALID;
-		dmc->cache[i].head = NULL;
 		dmc->cache[i].nr_queued = 0;
 	}
 	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
@@ -1038,7 +1037,6 @@ flashcache_md_load(struct cache_c *dmc)
 					((caddr_t)meta_data_cacheblock + 512 * (j / MD_BLOCKS_PER_SECTOR));
 			}
 			dmc->cache[i].nr_queued = 0;
-			dmc->cache[i].head = NULL;
 			/* 
 			 * If unclean shutdown, only the DIRTY blocks are loaded.
 			 */
@@ -1621,8 +1619,6 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	float cache_pct, dirty_pct;
 	int i;
 	int sz = 0; /* DMEMIT */
-	int nr_queued = 0;
-	unsigned long flags;
 
 	if (dmc->size > 0) {
 		dirty_pct = (dmc->nr_dirty * 100.0) / dmc->size;
@@ -1641,11 +1637,7 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, 
 	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	for (i = 0 ; i < dmc->size ; i++)
-		nr_queued += dmc->cache[i].nr_queued;
-	DMEMIT("\tnr_queued(%d)\n", nr_queued);
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	DMEMIT("\tnr_queued(%lu)\n", dmc->pending_jobs_count);
 	DMEMIT("Size Hist: ");
 	for (i = 1 ; i <= 32 ; i++) {
 		if (size_hist[i] > 0)

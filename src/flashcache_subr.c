@@ -137,6 +137,72 @@ flashcache_free_pending_job(struct pending_job *job)
 	atomic_dec(&nr_pending_jobs);
 }
 
+#define FLASHCACHE_PENDING_JOB_HASH(INDEX)		((INDEX) % PENDING_JOB_HASH_SIZE)
+
+void 
+flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
+		       int index, int action, struct pending_job *job)
+{
+	struct pending_job **head;
+	
+	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
+	DPRINTK("flashcache_enq_pending: Queue to pending Q Index %d %llu",
+		index, bio->bi_sector);
+	VERIFY(job != NULL);
+	job->action = action;
+	job->index = index;
+	job->bio = bio;
+	job->prev = NULL;
+	job->next = *head;
+	if (*head)
+		(*head)->prev = job;
+	*head = job;
+	dmc->cache[index].nr_queued++;
+	dmc->enqueues++;
+	dmc->pending_jobs_count++;
+}
+
+/*
+ * Deq and move all pending jobs that match the index for this slot to list returned
+ */
+struct pending_job *
+flashcache_deq_pending(struct cache_c *dmc, int index)
+{
+	struct pending_job *node, *next, *movelist = NULL;
+	int moved = 0;
+	struct pending_job **head;
+	
+	VERIFY(spin_is_locked(&dmc->cache_spin_lock));
+	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
+	for (node = *head ; node != NULL ; node = next) {
+		next = node->next;
+		if (node->index == index) {
+			/* 
+			 * Remove pending job from the global list of 
+			 * jobs and move it to the private list for freeing 
+			 */
+			if (node->prev == NULL) {
+				*head = node->next;
+				if (node->next)
+					node->next->prev = NULL;
+			} else
+				node->prev->next = node->next;
+			if (node->next == NULL) {
+				if (node->prev)
+					node->prev->next = NULL;
+			} else
+				node->next->prev = node->prev;
+			node->prev = NULL;
+			node->next = movelist;
+			movelist = node;
+			moved++;
+		}
+	}
+	VERIFY(dmc->pending_jobs_count >= moved);
+	dmc->pending_jobs_count -= moved;
+	return movelist;
+}
+
 #ifdef FLASHCACHE_DO_CHECKSUMS
 int
 flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
@@ -644,3 +710,4 @@ EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm);
 EXPORT_SYMBOL(flashcache_reclaim_lru_movetail);
 EXPORT_SYMBOL(flashcache_merge_writes);
+EXPORT_SYMBOL(flashcache_enq_pending);
