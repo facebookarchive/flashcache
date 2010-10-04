@@ -321,6 +321,8 @@ static ctl_table flashcache_table[] = {
 		.strategy	= &sysctl_intvec,
 #endif
 	},
+#ifdef notdef
+	/* Devel only */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_DEBUG,
@@ -331,6 +333,7 @@ static ctl_table flashcache_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+#endif /* notdef */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_MAX_CLEAN_IOS_TOTAL,
@@ -397,6 +400,8 @@ static ctl_table flashcache_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+#ifdef notdef
+	/* Write merging is always enabled */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_WRITE_MERGE,
@@ -407,6 +412,7 @@ static ctl_table flashcache_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+#endif /* notdef */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_ZERO_STATS,
