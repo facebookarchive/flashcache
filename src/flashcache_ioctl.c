@@ -221,6 +221,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	node = *tail;
 	while (node != NULL) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		if (force == 0) {
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,24)
 			task = find_task_by_pid_type(PIDTYPE_PID, node->pid);
@@ -237,6 +238,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 				continue;
 			}
 		}
+#endif
 		flashcache_del_pid_locked(dmc, node->pid, which_list);
 		node = *tail;
 	}

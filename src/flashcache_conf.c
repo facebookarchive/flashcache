@@ -286,16 +286,22 @@ flashcache_max_clean_ios_set_sysctl_handler(ctl_table *table, int write,
 
 static ctl_table flashcache_table[] = {
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_SYNC,
+#endif
 		.procname	= "do_sync",
 		.data		= &sysctl_flashcache_sync,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &flashcache_sync_sysctl_handler,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.strategy	= &sysctl_intvec,
+#endif
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_STOP_SYNC,
+#endif
 		.procname	= "stop_sync",
 		.data		= &sysctl_flashcache_stop_sync,
 		.maxlen		= sizeof(int),
@@ -303,16 +309,22 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_DIRTY_THRESH,
+#endif
 		.procname	= "dirty_thresh_pct",
 		.data		= &sysctl_flashcache_dirty_thresh,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &flashcache_dirty_thresh_sysctl_handler,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.strategy	= &sysctl_intvec,
+#endif
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_DEBUG,
+#endif
 		.procname	= "debug",
 		.data		= &sysctl_flashcache_debug,
 		.maxlen		= sizeof(int),
@@ -320,25 +332,35 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_MAX_CLEAN_IOS_TOTAL,
+#endif
 		.procname	= "max_clean_ios_total",
 		.data		= &sysctl_max_clean_ios_total,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &flashcache_max_clean_ios_total_sysctl_handler,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.strategy	= &sysctl_intvec,
+#endif
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_MAX_CLEAN_IOS_SET,
+#endif
 		.procname	= "max_clean_ios_set",
 		.data		= &sysctl_max_clean_ios_set,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &flashcache_max_clean_ios_set_sysctl_handler,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.strategy	= &sysctl_intvec,
+#endif
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_DO_EXPIRY,
+#endif
 		.procname	= "do_pid_expiry",
 		.data		= &sysctl_pid_do_expiry,
 		.maxlen		= sizeof(int),
@@ -346,7 +368,9 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_MAX_PIDS,
+#endif
 		.procname	= "max_pids",
 		.data		= &sysctl_flashcache_max_pids,
 		.maxlen		= sizeof(int),
@@ -354,7 +378,9 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_MAX_PID_EXPIRY,
+#endif
 		.procname	= "pid_expiry_secs",
 		.data		= &sysctl_pid_expiry_check,
 		.maxlen		= sizeof(int),
@@ -362,7 +388,9 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_RECLAIM_POLICY,
+#endif
 		.procname	= "reclaim_policy",
 		.data		= &sysctl_flashcache_reclaim_policy,
 		.maxlen		= sizeof(int),
@@ -370,7 +398,9 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_WRITE_MERGE,
+#endif
 		.procname	= "write_merge",
 		.data		= &sysctl_flashcache_write_merge,
 		.maxlen		= sizeof(int),
@@ -378,18 +408,24 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_ZERO_STATS,
+#endif
 		.procname	= "zero_stats",
 		.data		= &sysctl_flashcache_zerostats,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &flashcache_zerostats_sysctl_handler,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.strategy	= &sysctl_intvec,
+#endif
 	},
 #ifdef notdef
 	/* Disable this for all except devel builds */
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_ERROR_INJECT,
+#endif
 		.procname	= "error_inject",
 		.data		= &sysctl_flashcache_error_inject,
 		.maxlen		= sizeof(int),
@@ -398,7 +434,9 @@ static ctl_table flashcache_table[] = {
 	},
 #endif
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_DO_FAST_REMOVE,
+#endif
 		.procname	= "fast_remove",
 		.data		= &sysctl_flashcache_fast_remove,
 		.maxlen		= sizeof(int),
@@ -406,36 +444,54 @@ static ctl_table flashcache_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= FLASHCACHE_WB_CACHE_ALL,
+#endif
 		.procname	= "cache_all",
 		.data		= &sysctl_cache_all,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
-	{ .ctl_name = 0 }
+  {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	.ctl_name = 0
+#endif
+  }
 };
 
 static ctl_table flashcache_dir_table[] = {
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= DEV_RAID,
+#endif
 		.procname	= "flashcache",
 		.maxlen		= 0,
 		.mode		= S_IRUGO|S_IXUGO,
 		.child		= flashcache_table,
 	},
-	{ .ctl_name = 0 }
+  {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	.ctl_name = 0
+#endif
+  }
 };
 
 static ctl_table flashcache_root_table[] = {
 	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= CTL_DEV,
+#endif
 		.procname	= "dev",
 		.maxlen		= 0,
 		.mode		= 0555,
 		.child		= flashcache_dir_table,
 	},
-	{ .ctl_name = 0 }
+  {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+	.ctl_name = 0
+#endif
+  }
 };
 
 static int 
