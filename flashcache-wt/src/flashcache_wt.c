@@ -920,15 +920,25 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	dmc->tgt = ti;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34)
 	r = dm_get_device(ti, argv[0], 0, ti->len,
 			  dm_table_get_mode(ti->table), &dmc->disk_dev);
+#else
+	r = dm_get_device(ti, argv[0],
+			  dm_table_get_mode(ti->table), &dmc->disk_dev);
+#endif
 	if (r) {
 		ti->error = "flashcache-wt: Source device lookup failed";
 		goto bad1;
 	}
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34)
 	r = dm_get_device(ti, argv[1], 0, 0,
 			  dm_table_get_mode(ti->table), &dmc->cache_dev);
+#else
+	r = dm_get_device(ti, argv[1], 
+			  dm_table_get_mode(ti->table), &dmc->cache_dev);
+#endif
 	if (r) {
 		ti->error = "flashcache-wt: Cache device lookup failed";
 		goto bad2;
@@ -1272,6 +1282,9 @@ flashcache_wt_init(void)
 	if (r < 0) {
 		DMERR("cache: register failed %d", r);
 	}
+
+	printk("flashcache-wt: %s initialized\n", flashcache_wt_sw_version);
+	
 #ifdef CONFIG_PROC_FS
 	{
 		struct proc_dir_entry *entry;
