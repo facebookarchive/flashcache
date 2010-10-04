@@ -211,7 +211,6 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 {
 	struct flashcache_cachectl_pid *node, **tail;
 	unsigned long flags;
-	struct task_struct *task;
 	
 	if (which_list == FLASHCACHE_WHITELIST)
 		tail = &dmc->whitelist_tail;
@@ -223,6 +222,8 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 	while (node != NULL) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		if (force == 0) {
+			struct task_struct *task;
+
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,24)
 			task = find_task_by_pid_type(PIDTYPE_PID, node->pid);
 #else
