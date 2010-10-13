@@ -220,7 +220,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	node = *tail;
 	while (node != NULL) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)
 		if (force == 0) {
 			struct task_struct *task;
 
