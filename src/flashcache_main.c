@@ -39,13 +39,17 @@
 #include <linux/version.h>
 #include <linux/pid.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#endif
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
 #else
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #endif
 #include <linux/device-mapper.h>
@@ -54,6 +58,10 @@
 #endif
 #include "flashcache.h"
 #include "flashcache_ioctl.h"
+
+#ifndef DM_MAPIO_SUBMITTED
+#define DM_MAPIO_SUBMITTED	0
+#endif
 
 /*
  * TODO List :
@@ -89,9 +97,14 @@ extern int sysctl_flashcache_stop_sync;
 extern int sysctl_flashcache_reclaim_policy;
 extern int sysctl_pid_do_expiry;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-static int dm_io_async_bvec(unsigned int num_regions, 
-			    struct dm_io_region *where, int rw, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int dm_io_async_bvec(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+			    struct dm_io_region *where, 
+#else
+			    struct io_region *where, 
+#endif
+			    int rw, 
 			    struct bio_vec *bvec, io_notify_fn fn, 
 			    void *context)
 {
@@ -105,7 +118,6 @@ static int dm_io_async_bvec(unsigned int num_regions,
 	iorq.notify.fn = fn;
 	iorq.notify.context = context;
 	iorq.client = dmc->io_client;
-
 	return dm_io(&iorq, num_regions, where, NULL);
 }
 #endif
@@ -643,7 +655,7 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	struct cache_c *dmc = job->dmc;	
 	struct flash_cacheblock *md_sector;
 	int md_sector_ix;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	struct io_region where;
 #else
 	struct dm_io_region where;
@@ -980,9 +992,14 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		atomic_inc(&dmc->nr_jobs);
 		dmc->ssd_reads++;
 		dmc->disk_writes++;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
-			    flashcache_kcopyd_callback, job);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+			    flashcache_kcopyd_callback, 
+#else
+			    (kcopyd_notify_fn) flashcache_kcopyd_callback, 
+#endif
+			    job);
 #else
 		dm_kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			       (dm_kcopyd_notify_fn) flashcache_kcopyd_callback, 
@@ -1700,9 +1717,14 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		atomic_inc(&dmc->nr_jobs);
 		dmc->ssd_reads++;
 		dmc->disk_writes++;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
-			    flashcache_kcopyd_callback_sync, job);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
+			    flashcache_kcopyd_callback_sync,
+#else
+			    (kcopyd_notify_fn) flashcache_kcopyd_callback_sync, 
+#endif
+			    job);
 #else
 		dm_kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 			       (dm_kcopyd_notify_fn)flashcache_kcopyd_callback_sync, 

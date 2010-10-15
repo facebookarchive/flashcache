@@ -41,12 +41,16 @@
 #include <linux/hardirq.h>
 #include <asm/kmap_types.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#endif
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #else
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #endif
 #include <linux/dm-io.h>
@@ -83,11 +87,20 @@ static DEFINE_SPINLOCK(_job_lock);
 static LIST_HEAD(_complete_jobs);
 static LIST_HEAD(_io_jobs);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-static int dm_io_async_bvec(unsigned int num_regions, 
-			    struct dm_io_region *where, int rw, 
-			    struct bio_vec *bvec, io_notify_fn fn, 
-			    void *context)
+#ifndef DM_MAPIO_SUBMITTED
+#define DM_MAPIO_SUBMITTED	0
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int dm_io_async_bvec(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+		     struct dm_io_region *where, 
+#else
+		     struct io_region *where, 
+#endif
+		     int rw, 
+		     struct bio_vec *bvec, io_notify_fn fn, 
+		     void *context)
 {
 	struct kcached_job *job = (struct kcached_job *)context;
 	struct cache_c *dmc = job->dmc;
@@ -166,7 +179,7 @@ flashcache_wt_validate_checksum(struct kcached_job *job)
 static int 
 jobs_init(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23)
 	_job_cache = kmem_cache_create("kcached-jobs-wt",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
@@ -388,7 +401,7 @@ do_work(struct work_struct *work)
 static int 
 kcached_init(struct cache_c *dmc)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	int r;
 
 	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
@@ -407,7 +420,7 @@ kcached_client_destroy(struct cache_c *dmc)
 {
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	dm_io_put(FLASHCACHE_ASYNC_SIZE);
 #endif
 }

@@ -39,13 +39,13 @@
 #include <linux/version.h>
 #include <linux/pid.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
 #else
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #endif
 #include <linux/device-mapper.h>
@@ -224,7 +224,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 		if (force == 0) {
 			struct task_struct *task;
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,24)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,23)
 			task = find_task_by_pid_type(PIDTYPE_PID, node->pid);
 #else
 			task = find_task_by_vpid(node->pid);

@@ -53,7 +53,7 @@
 #define DPRINTK( s, arg... )
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
 #else
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))
@@ -136,10 +136,12 @@ struct cache_c {
 	struct dm_dev 		*disk_dev;   /* Source device */
 	struct dm_dev 		*cache_dev; /* Cache device */
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-	struct kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
 	struct dm_kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
+#else
+	struct kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	struct dm_io_client *io_client; /* Client memory pool*/
 #endif
 
@@ -260,7 +262,7 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	struct io_region disk;
 	struct io_region cache;
 #else
@@ -477,8 +479,9 @@ void flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 
 			     int *nr_writes, int set);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-int flashcache_dm_io_sync_vm(struct io_region *where, int rw, void *data);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct io_region *where, 
+			     int rw, void *data);
 #else
 int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where, 
 			     int rw, void *data);
@@ -488,6 +491,18 @@ void flashcache_unplug_device(struct block_device *bdev);
 void flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 			    int index, int action, struct pending_job *job);
 struct pending_job *flashcache_deq_pending(struct cache_c *dmc, int index);
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int dm_io_async_bvec(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+			    struct dm_io_region *where, 
+#else
+			    struct io_region *where, 
+#endif
+			    int rw, 
+			    struct bio_vec *bvec, io_notify_fn fn, 
+			    void *context);
+#endif
 
 #endif /* __KERNEL__ */
 

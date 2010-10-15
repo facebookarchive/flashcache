@@ -40,13 +40,13 @@
 #include <linux/sort.h>
 #include <asm/kmap_types.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #include "kcopyd.h"
 #else
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #endif
 #include <linux/device-mapper.h>
@@ -220,7 +220,7 @@ flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
 	where.sector = (index << dmc->block_shift) + dmc->md_sectors;
 	where.count = dmc->block_size;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-	error = flashcache_dm_io_sync_vm(&where, READ, block);
+	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
 #else
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
 #endif
@@ -588,11 +588,44 @@ out:
 		kfree(set_dirty_list);
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int 
+flashcache_dm_io_async_vm(struct cache_c *dmc, unsigned int num_regions, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+			  struct io_region *where, 
+#else
+			  struct dm_io_region *where, 
+#endif
+			  int rw,
+			  void *data, io_notify_fn fn, void *context)
+{
+	unsigned long error_bits = 0;
+	int error;
+	struct dm_io_request io_req = {
+		.bi_rw = rw,
+		.mem.type = DM_IO_VMA,
+		.mem.ptr.vma = data,
+		.mem.offset = 0,
+		.notify.fn = fn,
+		.client = dmc->io_client,
+	};
+
+	error = dm_io(&io_req, 1, where, &error_bits);
+	if (error)
+		return error;
+	if (error_bits)
+		return error_bits;
+	return 0;
+}
+#endif
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,29)
 /*
  * Wrappers for doing DM sync IO, using DM async IO.
  * It is a shame we need do this, but DM sync IO is interruptible :(
  * And we want uninterruptible disk IO :)
+ * 
+ * This is fixed in 2.6.30, where sync DM IO is uninterruptible.
  */
 #define FLASHCACHE_DM_IO_SYNC_INPROG	0x01
 
@@ -619,14 +652,24 @@ flashcache_dm_io_sync_vm_callback(unsigned long error, void *context)
 }
 
 int
-flashcache_dm_io_sync_vm(struct io_region *where, int rw, void *data)
+flashcache_dm_io_sync_vm(struct cache_c *dmc, 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+			 struct io_region *where, 
+#else
+			  struct dm_io_region *where, 
+#endif
+			 int rw, void *data)
 {
         DEFINE_WAIT(wait);
 	struct flashcache_dm_io_sync_state state;
 
 	state.error = -EINTR;
 	state.flags = FLASHCACHE_DM_IO_SYNC_INPROG;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	dm_io_async_vm(1, where, rw, data, flashcache_dm_io_sync_vm_callback, &state);
+#else
+	flashcache_dm_io_async_vm(dmc, 1, where, rw, data, flashcache_dm_io_sync_vm_callback, &state);
+#endif
 	flashcache_unplug_device(where->bdev);	
 	spin_lock_irq(&flashcache_dm_io_sync_spinlock);
 	while (state.flags & FLASHCACHE_DM_IO_SYNC_INPROG) {

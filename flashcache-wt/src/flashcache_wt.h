@@ -84,7 +84,7 @@ struct cache_c {
 	u_int8_t 		*cache_state;
 	u_int32_t		*set_lru_next;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	struct dm_io_client *io_client; /* Client memory pool*/
 #endif
 	
@@ -123,7 +123,7 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	struct io_region disk;
 	struct io_region cache;
 #else
@@ -143,7 +143,7 @@ struct kcached_job {
 /* Number of pages for I/O */
 #define FLASHCACHE_COPY_PAGES (1024)
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
 #else
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))
