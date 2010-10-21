@@ -1865,6 +1865,7 @@ flashcache_uncached_io_complete(struct kcached_job *job)
 		 * This should be a rare occurrence though.
 		 * XXX - We should track this.
 		 */
+		dmc->uncached_io_requeue++;
 	} else {
 		flashcache_bio_endio(job->bio, error);
 	}
@@ -1879,6 +1880,7 @@ flashcache_uncached_io_callback(unsigned long error, void *context)
 	struct kcached_job *job = (struct kcached_job *) context;
 
 	VERIFY(job->index == -1);
+	job->error = error;
 	push_uncached_io_complete(job);
 	schedule_work(&_kcached_wq);
 }

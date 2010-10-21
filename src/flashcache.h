@@ -206,6 +206,7 @@ struct cache_c {
 	unsigned long disk_reads, disk_writes;
 	unsigned long ssd_reads, ssd_writes;
 	unsigned long ssd_readfills, ssd_readfill_unplugs;
+	unsigned long uncached_io_requeue;
 
 	unsigned long clean_set_calls;
 	unsigned long clean_set_less_dirty;
