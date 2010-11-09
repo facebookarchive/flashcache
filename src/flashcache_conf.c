@@ -1445,10 +1445,8 @@ init:
 	}
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 	INIT_WORK(&dmc->delayed_clean, flashcache_clean_all_sets, dmc);
-	INIT_WORK(&dmc->readfill_wq, flashcache_do_readfill, dmc);
 #else
 	INIT_DELAYED_WORK(&dmc->delayed_clean, flashcache_clean_all_sets);
-	INIT_WORK(&dmc->readfill_wq, flashcache_do_readfill);
 #endif
 
 	dmc->whitelist_head = NULL;
@@ -1515,7 +1513,6 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->uncached_io_requeue = 0;
 	dmc->disk_reads = dmc->disk_writes = 0;
 	dmc->ssd_reads = dmc->ssd_writes = 0;
-	dmc->ssd_readfills = dmc->ssd_readfill_unplugs = 0;
 }
 
 /*
@@ -1645,7 +1642,6 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-	       "\treadfills(%lu), readfill unplugs(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
@@ -1658,7 +1654,6 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
-	       dmc->ssd_readfills, dmc->ssd_readfill_unplugs,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #else
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
@@ -1672,7 +1667,6 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tcleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-	       "\treadfills(%lu) readfill unplugs(%lu)\n" \
 	       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
 	       dmc->read_hits, read_hit_pct, 
 	       dmc->write_hits, write_hit_pct,
@@ -1684,7 +1678,6 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
-	       dmc->ssd_readfills, dmc->ssd_readfill_unplugs,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
 #endif
 }
