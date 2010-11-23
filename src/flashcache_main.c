@@ -133,9 +133,11 @@ flashcache_io_callback(unsigned long error, void *context)
 	VERIFY(index != -1);		
 	bio = job->bio;
 	VERIFY(bio != NULL);
-	if (error)
+	if (unlikely(error)) {
+		error = -EIO;
 		DMERR("flashcache_io_callback: io error %ld block %lu action %d", 
 		      error, job->disk.sector, job->action);
+	}
 	job->error = error;
 	switch (job->action) {
 	case READDISK:
@@ -283,7 +285,7 @@ flashcache_do_pending_error(struct kcached_job *job)
 	struct cacheblock *cacheblk = &dmc->cache[job->index];
 
 	DMERR("flashcache_do_pending_error: error %d block %lu action %d", 
-	      -job->error, job->disk.sector, job->action);
+	      job->error, job->disk.sector, job->action);
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	VERIFY(cacheblk->cache_state & VALID);
 	/* Invalidate block if possible */
@@ -558,7 +560,10 @@ flashcache_md_write_callback(unsigned long error, void *context)
 {
 	struct kcached_job *job = (struct kcached_job *)context;
 
-	job->error = error;
+	if (unlikely(error))
+		job->error = -EIO;
+	else
+		job->error = 0;
 	push_md_complete(job);
 	schedule_work(&_kcached_wq);
 }
@@ -714,7 +719,7 @@ flashcache_md_write_done(struct kcached_job *job)
 			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
 					DMERR("flashcache: WRITE: Cache metadata write failed ! error %d block %lu", 
-					      -job->error, cacheblk->dbn);
+					      job->error, cacheblk->dbn);
 				}
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_do_pending(job);
@@ -753,7 +758,7 @@ flashcache_md_write_done(struct kcached_job *job)
 			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
 					DMERR("flashcache: CLEAN: Cache metadata write failed ! error %d block %lu", 
-					      -job->error, cacheblk->dbn);
+					      job->error, cacheblk->dbn);
 				}
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_do_pending(job);
@@ -864,6 +869,10 @@ flashcache_kcopyd_callback(int read_err, unsigned int write_err, void *context)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		flashcache_md_write(job);
 	} else {
+		if (read_err)
+			read_err = -EIO;
+		if (write_err)
+			write_err = -EIO;
 		/* Disk write failed. We can not purge this block from flash */
 		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %lu", 
 		      -read_err, -write_err, job->disk.sector);
@@ -874,10 +883,10 @@ flashcache_kcopyd_callback(int read_err, unsigned int write_err, void *context)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		/* Set the error in the job and let do_pending() handle the error */
 		if (read_err) {
-			dmc->ssd_read_errors++;			
+			dmc->ssd_read_errors++;
 			job->error = read_err;
 		} else {
-			dmc->disk_write_errors++;			
+			dmc->disk_write_errors++;
 			job->error = write_err;
 		}
 		flashcache_do_pending(job);
@@ -1595,6 +1604,10 @@ flashcache_kcopyd_callback_sync(int read_err, unsigned int write_err, void *cont
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		flashcache_md_write(job);
 	} else {
+		if (read_err)
+			read_err = -EIO;
+		if (write_err)
+			write_err = -EIO;
 		/* Disk write failed. We can not purge this cache from flash */
 		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %lu", 
 		      -read_err, -write_err, job->disk.sector);
@@ -1825,7 +1838,10 @@ flashcache_uncached_io_callback(unsigned long error, void *context)
 	struct kcached_job *job = (struct kcached_job *) context;
 
 	VERIFY(job->index == -1);
-	job->error = error;
+	if (unlikely(error))
+		job->error = -EIO;
+	else
+		job->error = 0;
 	push_uncached_io_complete(job);
 	schedule_work(&_kcached_wq);
 }
