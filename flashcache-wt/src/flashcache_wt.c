@@ -824,7 +824,11 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 #define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
+#else
+#define bio_barrier(bio)        ((bio)->bi_rw & REQ_HARDBARRIER)
+#endif
 #endif
 
 /*
