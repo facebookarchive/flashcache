@@ -608,6 +608,7 @@ flashcache_dm_io_async_vm(struct cache_c *dmc, unsigned int num_regions,
 		.mem.ptr.vma = data,
 		.mem.offset = 0,
 		.notify.fn = fn,
+		.notify.context = context,
 		.client = dmc->io_client,
 	};
 
