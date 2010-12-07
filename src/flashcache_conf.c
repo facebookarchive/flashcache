@@ -1232,24 +1232,34 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	dmc->tgt = ti;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[0], 0, ti->len,
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
 	r = dm_get_device(ti, argv[0],
 			  dm_table_get_mode(ti->table), &dmc->disk_dev);
+#else
+#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
+	r = dm_get_device(ti, argv[0],
+			  dm_table_get_mode(ti->table), &dmc->disk_dev);
+#else 
+	r = dm_get_device(ti, argv[0], 0, ti->len,
+			  dm_table_get_mode(ti->table), &dmc->disk_dev);
+#endif
 #endif
 	if (r) {
 		ti->error = "flashcache: Source device lookup failed";
 		goto bad1;
 	}
 	strncpy(dmc->disk_devname, argv[0], DEV_PATHLEN);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[1], 0, 0,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
+	r = dm_get_device(ti, argv[0],
 			  dm_table_get_mode(ti->table), &dmc->cache_dev);
 #else
-	r = dm_get_device(ti, argv[1],
+#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
+	r = dm_get_device(ti, argv[0],
 			  dm_table_get_mode(ti->table), &dmc->cache_dev);
+#else
+	r = dm_get_device(ti, argv[0], 0, ti->len,
+			  dm_table_get_mode(ti->table), &dmc->cache_dev);
+#endif
 #endif
 	if (r) {
 		ti->error = "flashcache: Cache device lookup failed";
@@ -2049,6 +2059,9 @@ flashcache_init(void)
 	if (r < 0) {
 		DMERR("cache: register failed %d", r);
 	}
+
+        printk("flashcache: %s initialized\n", flashcache_sw_version);
+
 #ifdef CONFIG_PROC_FS
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,21)
 	flashcache_table_header = 
