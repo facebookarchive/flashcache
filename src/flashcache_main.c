@@ -393,7 +393,6 @@ flashcache_do_io(struct kcached_job *job)
 	job->dmc->ssd_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_io_callback, job);
-	flashcache_unplug_device(job->dmc->cache_dev->bdev);
 	VERIFY(r == 0);
 	/* In our case, dm_io_async_bvec() must always return 0 */
 }
@@ -671,7 +670,6 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	dm_io_async_bvec(1, &where, WRITE,
 			 &orig_job->md_io_bvec,
 			 flashcache_md_write_callback, orig_job);
-	flashcache_unplug_device(dmc->cache_dev->bdev);
 }
 
 void
@@ -1117,7 +1115,6 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 			dm_io_async_bvec(1, &job->cache, READ,
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
-			flashcache_unplug_device(dmc->cache_dev->bdev);
 		}
 	} else {
 		pjob = flashcache_alloc_pending_job(dmc);
@@ -1419,7 +1416,6 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 		dm_io_async_bvec(1, &job->cache, WRITE, 
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_io_callback, job);
-		flashcache_unplug_device(dmc->cache_dev->bdev);
 		flashcache_clean_set(dmc, index / dmc->assoc);
 	}
 }
@@ -1466,7 +1462,6 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			dm_io_async_bvec(1, &job->cache, WRITE, 
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
-			flashcache_unplug_device(dmc->cache_dev->bdev);
 			flashcache_clean_set(dmc, index / dmc->assoc);
 		}
 	} else {
