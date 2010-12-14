@@ -287,7 +287,7 @@ flashcache_max_clean_ios_set_sysctl_handler(ctl_table *table, int write,
 static ctl_table flashcache_table[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_SYNC,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "do_sync",
 		.data		= &sysctl_flashcache_sync,
@@ -300,7 +300,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_STOP_SYNC,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "stop_sync",
 		.data		= &sysctl_flashcache_stop_sync,
@@ -310,7 +310,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_DIRTY_THRESH,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "dirty_thresh_pct",
 		.data		= &sysctl_flashcache_dirty_thresh,
@@ -325,7 +325,7 @@ static ctl_table flashcache_table[] = {
 	/* Devel only */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_DEBUG,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "debug",
 		.data		= &sysctl_flashcache_debug,
@@ -336,7 +336,7 @@ static ctl_table flashcache_table[] = {
 #endif /* notdef */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_MAX_CLEAN_IOS_TOTAL,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "max_clean_ios_total",
 		.data		= &sysctl_max_clean_ios_total,
@@ -349,7 +349,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_MAX_CLEAN_IOS_SET,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "max_clean_ios_set",
 		.data		= &sysctl_max_clean_ios_set,
@@ -362,7 +362,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_DO_EXPIRY,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "do_pid_expiry",
 		.data		= &sysctl_pid_do_expiry,
@@ -372,7 +372,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_MAX_PIDS,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "max_pids",
 		.data		= &sysctl_flashcache_max_pids,
@@ -382,7 +382,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_MAX_PID_EXPIRY,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "pid_expiry_secs",
 		.data		= &sysctl_pid_expiry_check,
@@ -392,7 +392,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_RECLAIM_POLICY,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "reclaim_policy",
 		.data		= &sysctl_flashcache_reclaim_policy,
@@ -404,7 +404,7 @@ static ctl_table flashcache_table[] = {
 	/* Write merging is always enabled */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_WRITE_MERGE,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "write_merge",
 		.data		= &sysctl_flashcache_write_merge,
@@ -415,7 +415,7 @@ static ctl_table flashcache_table[] = {
 #endif /* notdef */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_ZERO_STATS,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "zero_stats",
 		.data		= &sysctl_flashcache_zerostats,
@@ -430,7 +430,7 @@ static ctl_table flashcache_table[] = {
 	/* Disable this for all except devel builds */
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_ERROR_INJECT,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "error_inject",
 		.data		= &sysctl_flashcache_error_inject,
@@ -441,7 +441,7 @@ static ctl_table flashcache_table[] = {
 #endif
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_DO_FAST_REMOVE,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "fast_remove",
 		.data		= &sysctl_flashcache_fast_remove,
@@ -451,7 +451,7 @@ static ctl_table flashcache_table[] = {
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= FLASHCACHE_WB_CACHE_ALL,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "cache_all",
 		.data		= &sysctl_cache_all,
@@ -469,7 +469,7 @@ static ctl_table flashcache_table[] = {
 static ctl_table flashcache_dir_table[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-		.ctl_name	= DEV_RAID,
+		.ctl_name	= CTL_UNNUMBERED,
 #endif
 		.procname	= "flashcache",
 		.maxlen		= 0,
