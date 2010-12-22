@@ -1200,6 +1200,29 @@ flashcache_clean_all_sets(struct work_struct *work)
 		flashcache_clean_set(dmc, i);
 }
 
+static int inline
+flashcache_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
+		   char *dmc_dname, int tilen)
+{
+	int rc;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else
+#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else 
+	rc = dm_get_device(ti, pth, 0, tilen,
+			   dm_table_get_mode(ti->table), dmd);
+#endif
+#endif
+	if (!rc)
+		strncpy(dmc_dname, pth, DEV_PATHLEN);
+	return rc;
+}
+
 /*
  * Construct a cache mapping.
  *  arg[0]: path to source device
@@ -1232,40 +1255,16 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	dmc->tgt = ti;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#else
-#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#else 
-	r = dm_get_device(ti, argv[0], 0, ti->len,
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#endif
-#endif
-	if (r) {
-		ti->error = "flashcache: Source device lookup failed";
+	if (flashcache_get_dev(ti, argv[0], &dmc->disk_dev, 
+			       dmc->disk_devname, ti->len)) {
+		ti->error = "flashcache: Disk device lookup failed";
 		goto bad1;
 	}
-	strncpy(dmc->disk_devname, argv[0], DEV_PATHLEN);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[1],
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#else
-#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
-	r = dm_get_device(ti, argv[1],
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#else
-	r = dm_get_device(ti, argv[1], 0, 0,
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#endif
-#endif
-	if (r) {
+	if (flashcache_get_dev(ti, argv[1], &dmc->cache_dev,
+			       dmc->cache_devname, 0)) {
 		ti->error = "flashcache: Cache device lookup failed";
 		goto bad2;
 	}
-	strncpy(dmc->cache_devname, argv[1], DEV_PATHLEN);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
