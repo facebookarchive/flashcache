@@ -1,6 +1,8 @@
 EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./
 UTILS_CFLAGS=-I./
 
+KERNEL_TREE ?= /lib/modules/$(shell uname -r)/build
+
 obj-m += flashcache.o
 flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o
 
