@@ -1,5 +1,5 @@
-EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./
-UTILS_CFLAGS=-I./
+EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
+UTILS_CFLAGS=-I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
 
 KERNEL_TREE ?= /lib/modules/$(shell uname -r)/build
 
@@ -9,10 +9,11 @@ flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashca
 KERNEL_SOURCE_VERSION ?= $(shell uname -r)
 
 all:
-	make -C $(KERNEL_TREE) M=$(PWD) modules
-	$(CC) $(UTILS_CFLAGS) -o utils/flashcache_create utils/flashcache_create.c
-	$(CC) $(UTILS_CFLAGS) -o utils/flashcache_destroy utils/flashcache_destroy.c
-	$(CC) $(UTILS_CFLAGS) -o utils/flashcache_load utils/flashcache_load.c
+	make -C $(KERNEL_TREE) M=$(PWD) modules V=0
+	@echo "building utils"
+	@$(CC) $(UTILS_CFLAGS) -o utils/flashcache_create utils/flashcache_create.c
+	@$(CC) $(UTILS_CFLAGS) -o utils/flashcache_destroy utils/flashcache_destroy.c
+	@$(CC) $(UTILS_CFLAGS) -o utils/flashcache_load utils/flashcache_load.c
 
 install: all
 	install -o root -g root -m 0755 -d /lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/

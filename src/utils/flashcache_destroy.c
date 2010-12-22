@@ -44,6 +44,9 @@ void
 usage(char *pname)
 {
 	fprintf(stderr, "Usage: %s ssd_devname\n", pname);
+#ifdef COMMIT_REV
+	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
+#endif
 	exit(1);
 }
 

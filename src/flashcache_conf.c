@@ -2018,6 +2018,9 @@ static int
 flashcache_version_show(struct seq_file *seq, void *v)
 {
 	seq_printf(seq, "Flashcache Version : %s\n", flashcache_sw_version);
+#ifdef COMMIT_REV
+	seq_printf(seq, "git commit: %s\n", COMMIT_REV);
+#endif
 	return 0;
 }
 

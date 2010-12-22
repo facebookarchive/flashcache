@@ -44,6 +44,9 @@ usage(char *pname)
 	fprintf(stderr, "Usage: %s [-b block size] [ -s cache size] cachedev ssd_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -s are sectors, use k/m/g allowed\n",
 		pname);
+#ifdef COMMIT_REV
+	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
+#endif
 	exit(1);
 }
 
