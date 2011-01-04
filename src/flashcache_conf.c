@@ -1333,7 +1333,9 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			r = -EINVAL;
 			goto bad5;
 		}
-	} else
+	}
+	
+	if (!dmc->block_size)
 		dmc->block_size = DEFAULT_BLOCK_SIZE;
 	dmc->block_shift = ffs(dmc->block_size) - 1;
 	dmc->block_mask = dmc->block_size - 1;
@@ -1345,9 +1347,10 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			r = -EINVAL;
 			goto bad5;
 		}
-	} else {
-		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	}
+	
+	if (!dmc->size)
+		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 
 	if (argc >= 6) {
 		if (sscanf(argv[5], "%u", &dmc->assoc) != 1) {
@@ -1362,9 +1365,11 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			r = -EINVAL;
 			goto bad5;
 		}
-	} else
+	}
+
+	if (!dmc->assoc)
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
-	
+
 	consecutive_blocks = dmc->assoc;
 	dmc->consecutive_shift = ffs(consecutive_blocks) - 1;
 
