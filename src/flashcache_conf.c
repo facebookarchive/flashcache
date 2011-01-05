@@ -1202,7 +1202,7 @@ flashcache_clean_all_sets(struct work_struct *work)
 
 static int inline
 flashcache_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
-		   char *dmc_dname, int tilen)
+		   char *dmc_dname, sector_t tilen)
 {
 	int rc;
 
