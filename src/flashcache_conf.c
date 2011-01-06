@@ -284,6 +284,10 @@ flashcache_max_clean_ios_set_sysctl_handler(ctl_table *table, int write,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
+#define CTL_UNNUMBERED			-2
+#endif
+
 static ctl_table flashcache_table[] = {
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
