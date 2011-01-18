@@ -834,15 +834,17 @@ flashcache_md_write(struct kcached_job *job)
 		md_sector_head->nr_in_prog = 1;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		/*
-		 * If !in_interrupt, we can kick off the write(s) immediately.
-		 * Else punt for the worker thread.
+		 * Always push to a worker thread. If the driver has
+		 * a completion thread, we could end up deadlocking even
+		 * if the context would be safe enough to write from.
+		 * This could be executed from the context of an IO 
+		 * completion thread. Kicking off the write from that
+		 * context could result in the IO completion thread 
+		 * blocking (eg on memory allocation). That can easily
+		 * deadlock.
 		 */
-		if (!in_interrupt()) {
-			flashcache_md_write_kickoff(job);
-		} else {
-			push_md_io(job);
-			schedule_work(&_kcached_wq);
-		}
+		push_md_io(job);
+		schedule_work(&_kcached_wq);
 	}
 }
 
