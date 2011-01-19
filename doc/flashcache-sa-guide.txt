@@ -275,7 +275,7 @@ XFS allocates blocks for files in a given directory in a new
 allocation group. By tuning agsize and agcount (mkfs.xfs parameters),
 we can achieve much better distribution of blocks across
 flashcache. Better distribution of blocks across flashcache will
-increase collisions on flashcache sets considerably, increase cache
+decrease collisions on flashcache sets considerably, increase cache
 hit rates significantly and result in lower IO latencies.
 
 We can achieve this by computing agsize (and implicitly agcount) using
@@ -336,7 +336,7 @@ So an agsize of 720g would work well, and 720*5 = 3.6TB (~ 3.5TB)
 b) C = 150g, V = 3.5TB
 Consider agcount=4
 
-agsize % 150 = (1/5)*150
+agsize % 150 = (1/4)*150
 agsize % 150 = 37.5
 
 So an agsize of 937g would work well, and 937*4 = 3.7TB (~ 3.5TB)
