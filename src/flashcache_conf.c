@@ -1704,13 +1704,13 @@ static void
 flashcache_status_table(struct cache_c *dmc, status_type_t type,
 			     char *result, unsigned int maxlen)
 {
-	float cache_pct, dirty_pct;
+	u_int64_t  cache_pct, dirty_pct;
 	int i;
 	int sz = 0; /* DMEMIT */
 
 	if (dmc->size > 0) {
-		dirty_pct = (dmc->nr_dirty * 100.0) / dmc->size;
-		cache_pct = (dmc->cached_blocks * 100.0) / dmc->size;
+		dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
+		cache_pct = ((u_int64_t)dmc->cached_blocks * 100) / dmc->size;
 	} else {
 		cache_pct = 0;
 		dirty_pct = 0;
