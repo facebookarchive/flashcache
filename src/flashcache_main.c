@@ -1765,6 +1765,7 @@ flashcache_sync_all(struct cache_c *dmc)
 {
 	unsigned long flags;
 
+	sysctl_flashcache_stop_sync = 0;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	dmc->sync_index = 0;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);	
