@@ -712,14 +712,14 @@ flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where, int rw
 void
 flashcache_update_sync_progress(struct cache_c *dmc)
 {
-	int dirty_pct;
+	u_int64_t dirty_pct;
 	
 	if (dmc->cleanings % 1000)
 		return;
 	if (!dmc->nr_dirty || !dmc->size)
 		return;
-	dirty_pct = (dmc->nr_dirty * 100) / dmc->size;
-	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %d%%", 
+	dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
+	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %llu%%", 
 	       dmc->nr_dirty, dirty_pct);
 	printk(KERN_INFO "\r");
 }
