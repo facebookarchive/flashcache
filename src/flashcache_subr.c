@@ -716,7 +716,7 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 	
 	if (dmc->cleanings % 1000)
 		return;
-	if (!dmc->nr_dirty || !dmc->size)
+	if (!dmc->nr_dirty || !dmc->size || !printk_ratelimit())
 		return;
 	dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
 	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %llu%%", 
