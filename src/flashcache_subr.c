@@ -217,7 +217,7 @@ flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
 	int cnt;
 
 	where.bdev = dmc->cache_dev->bdev;
-	where.sector = ((sector_t)index << dmc->block_shift) + dmc->md_sectors;
+	where.sector = INDEX_TO_CACHE_ADDR(dmc, index);
 	where.count = dmc->block_size;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
@@ -393,7 +393,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	job->index = index;
 	job->cache.bdev = dmc->cache_dev->bdev;
 	if (index != -1) {
-		job->cache.sector = ((sector_t)index << dmc->block_shift) + dmc->md_sectors;
+		job->cache.sector = INDEX_TO_CACHE_ADDR(dmc, index);
 		job->cache.count = dmc->block_size;	
 	}
 	job->error = 0;	
@@ -407,7 +407,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 		job->disk.count = to_sector(bio->bi_size);
 	}
 	job->next = NULL;
-	job->md_sector = NULL;
+	job->md_block = NULL;
 	return job;
 }
 

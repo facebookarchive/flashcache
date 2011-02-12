@@ -41,8 +41,8 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-b block size] [ -s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
-	fprintf(stderr, "Usage : %s Default units for -b, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
+	fprintf(stderr, "Usage: %s [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
 		pname);
 #ifdef COMMIT_REV
 	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
@@ -75,7 +75,7 @@ get_block_size(char *s)
 			fprintf (stderr, "%s: Unknown block size type %c\n", pname, *c);
 			exit (1);
 	}
-	if (size & ~size) {
+	if (size & (size - 1)) {
 		fprintf(stderr, "%s: Block size must be a power of 2\n", pname);
 		exit(1);
 	}
@@ -168,12 +168,12 @@ main(int argc, char **argv)
 	char *disk_devname, *ssd_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t cache_devsize, disk_devsize;
-	sector_t block_size = 0, cache_size = 0;
+	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
 	int cache_sectorsize;
 	int associativity = 512;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:va:")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:m:va:")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
@@ -184,6 +184,10 @@ main(int argc, char **argv)
 		case 'b':
 			block_size = get_block_size(optarg);
 			/* Block size should be a power of 2 */
+                        break;
+		case 'm':
+			md_block_size = get_block_size(optarg);
+			/* MD block size should be a power of 2 */
                         break;
 		case 'v':
 			verbose = 1;
@@ -199,6 +203,8 @@ main(int argc, char **argv)
 		usage(pname);
 	if (block_size == 0)
 		block_size = 8;		/* 4KB default blocksize */
+	if (md_block_size == 0)
+		md_block_size = 8;	/* 4KB default blocksize */
 	cachedev = argv[optind++];
 	if (optind == argc)
 		usage(pname);
@@ -208,7 +214,7 @@ main(int argc, char **argv)
 	disk_devname = argv[optind];
 	printf("cachedev %s, ssd_devname %s, disk_devname %s\n", 
 	       cachedev, ssd_devname, disk_devname);
-	printf("block_size %lu, cache_size %lu\n", block_size, cache_size);
+	printf("block_size %lu, md_block_size %lu, cache_size %lu\n", block_size, md_block_size, cache_size);
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -251,9 +257,10 @@ main(int argc, char **argv)
 			pname, ssd_devname);
 		exit(1);		
 	}
-	if (!force && cache_sectorsize != 512) {
-		fprintf(stderr, "%s: Format SSD device (%s) to 512b sectors (%d) !\n", 
-			pname, ssd_devname, cache_sectorsize);
+	if (md_block_size > 0 &&
+	    md_block_size * 512 < cache_sectorsize) {
+		fprintf(stderr, "%s: SSD device (%s) sector size (%d) cannot be larger than metadata block size (%d) !\n",
+		        pname, ssd_devname, cache_sectorsize, md_block_size * 512);
 		exit(1);				
 	}
 	if (cache_size && cache_size > cache_devsize) {
@@ -274,10 +281,10 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s 2 %lu %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s 2 %lu %lu %lu %lu"
 		" | dmsetup create %s",
 		disk_devsize, disk_devname, ssd_devname, block_size, 
-		cache_size, associativity,
+		cache_size, associativity, md_block_size, 
 		cachedev);
 
 	/* Go ahead and create the cache.

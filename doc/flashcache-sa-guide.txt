@@ -102,6 +102,34 @@ performance.
 
 A 4KB cache blocksize for the vast majority of workloads (and filesystems).
 
+Cache Metadata Blocksize selection :
+==================================
+In Flashcache version 1, the metadata blocksize was fixed at 1 (512b) sector.
+Flashcache version 2 removes this limitation. In version 2, we can configure 
+a larger flashcache metadata blocksize. Version 2 maintains backwards compatibility
+for caches created with Version 1. For these cases, a metadata blocksize of 512
+will continue to be used.
+
+Ideal choices for the metadata blocksize are 4KB (default) or 8KB. There is 
+little benefit to choosing a metadata blocksize greater than 8KB. The choice 
+of metadata blocksize is subject to the following rules :
+
+1) Metadata blocksize must be a power of 2.
+2) Metadata blocksize cannot be smaller than sector size configured on the 
+ssd device.
+3) A single metadata block cannot contain metadata for 2 cache sets. In other
+words, with the default associativity of 512 (with each cache metadata slot 
+sizing at 16 bytes), the entire metadata for a given set fits in 8KB (512*16b).
+For an associativity of 512, we cannot configure a metadata blocksize greater
+than 8KB.
+
+Advantages of choosing a larger (than 512b) metadata blocksize :
+- Allows the ssd to be configured to larger sectors. For example, some ssds
+  allow choosing a 4KB sector, often a more performant choice.
+- Allows flashache to do better batching of metadata updates, potentially 
+  reducing metadata updates, small ssd writes, reducing write amplification
+  and higher ssd lifetimes.
+
 FlashCache Sysctls :
 ==================
 These sysctls will apply to all cache devices on the node.

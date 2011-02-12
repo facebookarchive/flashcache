@@ -570,22 +570,25 @@ flashcache_md_write_callback(unsigned long error, void *context)
 static int
 flashcache_alloc_md_sector(struct kcached_job *job)
 {
-	struct page *page;
+	struct page *page = NULL;
 	
-	if (likely((sysctl_flashcache_error_inject & MD_ALLOC_SECTOR_ERROR) == 0))
-		page = alloc_pages(GFP_NOIO, 0);
-	else {
+	if (likely((sysctl_flashcache_error_inject & MD_ALLOC_SECTOR_ERROR) == 0)) {
+		unsigned long addr;
+
+		/* Get physically consecutive pages */
+		addr = __get_free_pages(GFP_NOIO, get_order(MD_BLOCK_BYTES(job->dmc)));
+		if (addr)
+			page = virt_to_page(addr);
+	} else
 		sysctl_flashcache_error_inject &= ~MD_ALLOC_SECTOR_ERROR;
-		page = NULL;
-	}
 	job->md_io_bvec.bv_page = page;
 	if (unlikely(page == NULL)) {
 		job->dmc->memory_alloc_errors++;
 		return -ENOMEM;
 	}
-	job->md_io_bvec.bv_len = 512;
+	job->md_io_bvec.bv_len = MD_BLOCK_BYTES(job->dmc);
 	job->md_io_bvec.bv_offset = 0;
-	job->md_sector = (struct flash_cacheblock *)page_address(page);
+	job->md_block = (struct flash_cacheblock *)page_address(page);
 	return 0;
 }
 
@@ -593,22 +596,22 @@ static void
 flashcache_free_md_sector(struct kcached_job *job)
 {
 	if (job->md_io_bvec.bv_page != NULL)
-		__free_page(job->md_io_bvec.bv_page);
+		__free_pages(job->md_io_bvec.bv_page, get_order(MD_BLOCK_BYTES(job->dmc)));
 }
 
 void
 flashcache_md_write_kickoff(struct kcached_job *job)
 {
 	struct cache_c *dmc = job->dmc;	
-	struct flash_cacheblock *md_sector;
-	int md_sector_ix;
+	struct flash_cacheblock *md_block;
+	int md_block_ix;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	struct io_region where;
 #else
 	struct dm_io_region where;
 #endif
 	int i;
-	struct cache_md_sector_head *md_sector_head;
+	struct cache_md_block_head *md_block_head;
 	struct kcached_job *orig_job = job;
 	unsigned long flags;
 
@@ -622,49 +625,49 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	/*
 	 * Transfer whatever is on the pending queue to the md_io_inprog queue.
 	 */
-	md_sector_head = &dmc->md_sectors_buf[INDEX_TO_MD_SECTOR(job->index)];
-	md_sector_head->md_io_inprog = md_sector_head->queued_updates;
-	md_sector_head->queued_updates = NULL;
-	md_sector = job->md_sector;
-	md_sector_ix = INDEX_TO_MD_SECTOR(job->index) * MD_BLOCKS_PER_SECTOR;
-	/* First copy out the entire sector */
+	md_block_head = &dmc->md_blocks_buf[INDEX_TO_MD_BLOCK(dmc, job->index)];
+	md_block_head->md_io_inprog = md_block_head->queued_updates;
+	md_block_head->queued_updates = NULL;
+	md_block = job->md_block;
+	md_block_ix = INDEX_TO_MD_BLOCK(dmc, job->index) * MD_SLOTS_PER_BLOCK(dmc);
+	/* First copy out the entire md block */
 	for (i = 0 ; 
-	     i < MD_BLOCKS_PER_SECTOR && md_sector_ix < dmc->size ; 
-	     i++, md_sector_ix++) {
-		md_sector[i].dbn = dmc->cache[md_sector_ix].dbn;
+	     i < MD_SLOTS_PER_BLOCK(dmc) && md_block_ix < dmc->size ; 
+	     i++, md_block_ix++) {
+		md_block[i].dbn = dmc->cache[md_block_ix].dbn;
 #ifdef FLASHCACHE_DO_CHECKSUMS
-		md_sector[i].checksum = dmc->cache[md_sector_ix].checksum;
+		md_block[i].checksum = dmc->cache[md_block_ix].checksum;
 #endif
-		md_sector[i].cache_state = 
-			dmc->cache[md_sector_ix].cache_state & (VALID | INVALID | DIRTY);
+		md_block[i].cache_state = 
+			dmc->cache[md_block_ix].cache_state & (VALID | INVALID | DIRTY);
 	}
 	/* Then set/clear the DIRTY bit for the "current" index */
 	if (job->action == WRITECACHE) {
 		/* DIRTY the cache block */
-		md_sector[INDEX_TO_MD_SECTOR_OFFSET(job->index)].cache_state = 
+		md_block[INDEX_TO_MD_BLOCK_OFFSET(dmc, job->index)].cache_state = 
 			(VALID | DIRTY);
 	} else { /* job->action == WRITEDISK* */
 		/* un-DIRTY the cache block */
-		md_sector[INDEX_TO_MD_SECTOR_OFFSET(job->index)].cache_state = VALID;
+		md_block[INDEX_TO_MD_BLOCK_OFFSET(dmc, job->index)].cache_state = VALID;
 	}
 
-	for (job = md_sector_head->md_io_inprog ; 
+	for (job = md_block_head->md_io_inprog ; 
 	     job != NULL ;
 	     job = job->next) {
 		dmc->md_write_batch++;
 		if (job->action == WRITECACHE) {
 			/* DIRTY the cache block */
-			md_sector[INDEX_TO_MD_SECTOR_OFFSET(job->index)].cache_state = 
+			md_block[INDEX_TO_MD_BLOCK_OFFSET(dmc, job->index)].cache_state = 
 				(VALID | DIRTY);
 		} else { /* job->action == WRITEDISK* */
 			/* un-DIRTY the cache block */
-			md_sector[INDEX_TO_MD_SECTOR_OFFSET(job->index)].cache_state = VALID;
+			md_block[INDEX_TO_MD_BLOCK_OFFSET(dmc, job->index)].cache_state = VALID;
 		}
 	}
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	where.bdev = dmc->cache_dev->bdev;
-	where.count = 1;
-	where.sector = 1 + INDEX_TO_MD_SECTOR(orig_job->index);
+	where.count = MD_SECTORS_PER_BLOCK(dmc);
+	where.sector = (1 + INDEX_TO_MD_BLOCK(dmc, orig_job->index)) * MD_SECTORS_PER_BLOCK(dmc);
 	dmc->ssd_writes++;
 	dmc->md_ssd_writes++;
 	dm_io_async_bvec(1, &where, WRITE,
@@ -676,7 +679,7 @@ void
 flashcache_md_write_done(struct kcached_job *job)
 {
 	struct cache_c *dmc = job->dmc;
-	struct cache_md_sector_head *md_sector_head;
+	struct cache_md_block_head *md_block_head;
 	int index;
 	unsigned long flags;
 	struct kcached_job *job_list;
@@ -688,11 +691,11 @@ flashcache_md_write_done(struct kcached_job *job)
 	VERIFY(job->action == WRITEDISK || job->action == WRITECACHE || 
 	       job->action == WRITEDISK_SYNC);
 	flashcache_free_md_sector(job);
-	job->md_sector = NULL;
-	md_sector_head = &dmc->md_sectors_buf[INDEX_TO_MD_SECTOR(job->index)];
+	job->md_block = NULL;
+	md_block_head = &dmc->md_blocks_buf[INDEX_TO_MD_BLOCK(dmc, job->index)];
 	job_list = job;
-	job->next = md_sector_head->md_io_inprog;
-	md_sector_head->md_io_inprog = NULL;
+	job->next = md_block_head->md_io_inprog;
+	md_block_head->md_io_inprog = NULL;
 	for (job = job_list ; job != NULL ; job = next) {
 		next = job->next;
 		job->error = error;
@@ -783,17 +786,17 @@ flashcache_md_write_done(struct kcached_job *job)
 		}
 	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	if (md_sector_head->queued_updates != NULL) {
+	if (md_block_head->queued_updates != NULL) {
 		/* peel off the first job from the pending queue and kick that off */
-		job = md_sector_head->queued_updates;
-		md_sector_head->queued_updates = job->next;
+		job = md_block_head->queued_updates;
+		md_block_head->queued_updates = job->next;
 		job->next = NULL;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		VERIFY(job->action == WRITEDISK || job->action == WRITECACHE ||
 		       job->action == WRITEDISK_SYNC);
 		flashcache_md_write_kickoff(job);
 	} else {
-		md_sector_head->nr_in_prog = 0;
+		md_block_head->nr_in_prog = 0;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	}
 }
@@ -812,26 +815,26 @@ void
 flashcache_md_write(struct kcached_job *job)
 {
 	struct cache_c *dmc = job->dmc;
-	struct cache_md_sector_head *md_sector_head;
+	struct cache_md_block_head *md_block_head;
 	unsigned long flags;
 	
 	VERIFY(job->action == WRITEDISK || job->action == WRITECACHE || 
 	       job->action == WRITEDISK_SYNC);
-	md_sector_head = &dmc->md_sectors_buf[INDEX_TO_MD_SECTOR(job->index)];
+	md_block_head = &dmc->md_blocks_buf[INDEX_TO_MD_BLOCK(dmc, job->index)];
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	/* If a write is in progress for this metadata sector, queue this update up */
-	if (md_sector_head->nr_in_prog != 0) {
+	if (md_block_head->nr_in_prog != 0) {
 		struct kcached_job **nodepp;
 		
 		/* A MD update is already in progress, queue this one up for later */
-		nodepp = &md_sector_head->queued_updates;
+		nodepp = &md_block_head->queued_updates;
 		while (*nodepp != NULL)
 			nodepp = &((*nodepp)->next);
 		job->next = NULL;
 		*nodepp = job;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	} else {
-		md_sector_head->nr_in_prog = 1;
+		md_block_head->nr_in_prog = 1;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		/*
 		 * Always push to a worker thread. If the driver has

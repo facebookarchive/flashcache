@@ -51,15 +51,17 @@ usage(char *pname)
 }
 
 char *pname;
-char buf[512];
+char *buf;
 
 main(int argc, char **argv)
 {
 	int cache_fd, disk_fd, c;
 	char *disk_devname, *ssd_devname, *cachedev;
-	struct flash_superblock *sb = (struct flash_superblock *)buf;
+	struct flash_superblock *sb;
 	sector_t cache_devsize, disk_devsize;
 	sector_t block_size = 0;
+	u_int64_t md_block_bytes = 0;
+	u_int64_t md_slots_per_block = 0;
 	u_int64_t cache_size = 0;
 	int dirty_blocks = 0;
 	
@@ -82,10 +84,16 @@ main(int argc, char **argv)
 		exit(1);
 	}
         lseek(cache_fd, 0, SEEK_SET);
+	buf = (char *)malloc(512);
+	if (!buf) {
+		fprintf(stderr, "Failed to allocate sector buffer\n");
+		exit(1);
+	}
 	if (read(cache_fd, buf, 512) < 0) {
 		fprintf(stderr, "Cannot read Flashcache superblock %s\n", ssd_devname);
 		exit(1);		
 	}
+	sb = (struct flash_superblock *)buf;
 	if (!(sb->cache_sb_state == CACHE_MD_STATE_DIRTY ||
 	      sb->cache_sb_state == CACHE_MD_STATE_CLEAN ||
 	      sb->cache_sb_state == CACHE_MD_STATE_FASTCLEAN ||
@@ -94,16 +102,32 @@ main(int argc, char **argv)
 			pname, ssd_devname);
 		exit(1);
 	}
+
+	/* Backwards compat, versions < 2 use a 1 sector metadata blocksize */
+	if (sb->cache_version == 1)
+		sb->md_block_size = 1;
+
 	cache_size = sb->size;
+
+	md_block_bytes = sb->md_block_size * 512;
+        lseek(cache_fd, md_block_bytes, SEEK_SET); /* lseek past the superblock to first MD slot */
+	md_slots_per_block = (md_block_bytes / (sizeof(struct flash_cacheblock)));
+
+	free(buf);
+	buf = (char *)malloc(md_block_bytes);
+	if (!buf) {
+		fprintf(stderr, "Failed to allocate sector buffer\n");
+		exit(1);
+	}
 	while (cache_size > 0 && dirty_blocks == 0) {
 		struct flash_cacheblock *next_ptr;
 		int j, slots_read;
 		
-		if (cache_size < MD_BLOCKS_PER_SECTOR)
+		if (cache_size < md_slots_per_block)
 			slots_read = cache_size;
 		else
-			slots_read = MD_BLOCKS_PER_SECTOR;			
-		if (read(cache_fd, buf, 512) < 0) {
+			slots_read = md_slots_per_block;			
+		if (read(cache_fd, buf, md_block_bytes) < 0) {
 			fprintf(stderr, "Cannot read Flashcache metadata %s\n", ssd_devname);
 			exit(1);		
 		}

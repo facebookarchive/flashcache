@@ -25,7 +25,7 @@
 #ifndef FLASHCACHE_H
 #define FLASHCACHE_H
 
-#define FLASHCACHE_VERSION		1
+#define FLASHCACHE_VERSION		2
 
 #define DEV_PATHLEN	128
 
@@ -95,6 +95,8 @@
 #define DEFAULT_CACHE_SIZE	65536
 #define DEFAULT_CACHE_ASSOC	512
 #define DEFAULT_BLOCK_SIZE	8	/* 4 KB */
+#define DEFAULT_MD_BLOCK_SIZE	8	/* 4 KB */
+#define FLASHCACHE_MAX_MD_BLOCK_SIZE	128	/* 64 KB */
 
 #define FLASHCACHE_FIFO		0
 #define FLASHCACHE_LRU		1
@@ -105,6 +107,7 @@
  * using 4 bytes instead of 16 bytes. The upshot of this is that we 
  * are required to clamp the associativity at an 8K max.
  */
+#define FLASHCACHE_MIN_ASSOC	 256
 #define FLASHCACHE_MAX_ASSOC	8192
 #define FLASHCACHE_LRU_NULL	0xFFFF
 
@@ -145,11 +148,15 @@ struct cache_c {
 	struct dm_io_client *io_client; /* Client memory pool*/
 #endif
 
+	int 			on_ssd_version;
+	
 	spinlock_t		cache_spin_lock;
 
 	struct cacheblock	*cache;	/* Hash table for cache blocks */
 	struct cache_set	*cache_sets;
-	struct cache_md_sector_head *md_sectors_buf;
+	struct cache_md_block_head *md_blocks_buf;
+
+	unsigned int md_block_size;	/* Metadata block size in sectors */
 	
 	sector_t size;			/* Cache size */
 	unsigned int assoc;		/* Cache associativity */
@@ -171,7 +178,7 @@ struct cache_c {
 	int	sync_index;
 	int	nr_dirty;
 
-	int	md_sectors;		/* Numbers of metadata sectors, including header */
+	int	md_blocks;		/* Numbers of metadata blocks, including header */
 
 	/* Stats */
 	unsigned long reads;		/* Number of reads */
@@ -267,7 +274,7 @@ struct kcached_job {
 	int    index;
 	int    action;
 	int 	error;
-	struct flash_cacheblock *md_sector;
+	struct flash_cacheblock *md_block;
 	struct bio_vec md_io_bvec;
 	struct kcached_job *next;
 };
@@ -312,6 +319,7 @@ struct flash_superblock {
 	char disk_devname[DEV_PATHLEN];
 	sector_t disk_devsize;
 	u_int32_t cache_version;
+	u_int32_t md_block_size;
 };
 
 /* 
@@ -321,21 +329,43 @@ struct flash_superblock {
  * them in the cache.
  * On a clean shutdown, we will sync the state for every block, and we will
  * load every block back into cache on a restart.
+ * 
+ * Note: When using larger flashcache metadata blocks, it is important to make 
+ * sure that a flash_cacheblock does not straddle 2 sectors. This avoids
+ * partial writes of a metadata slot on a powerfail/node crash. Aligning this
+ * a 16b or 32b struct avoids that issue.
+ * 
+ * Note: If a on-ssd flash_cacheblock does not fit exactly within a 512b sector,
+ * (ie. if there are any remainder runt bytes), logic in flashcache_conf.c which
+ * reads and writes flashcache metadata on create/load/remove will break.
+ * 
+ * If changing these, make sure they remain a ^2 size !
  */
+#ifdef FLASHCACHE_DO_CHECKSUMS
 struct flash_cacheblock {
 	sector_t 	dbn;	/* Sector number of the cached block */
-#ifdef FLASHCACHE_DO_CHECKSUMS
 	u_int64_t 	checksum;
-#endif
 	u_int32_t	cache_state; /* INVALID | VALID | DIRTY */
-};
+} __attribute__ ((aligned(32)));
+#else
+struct flash_cacheblock {
+	sector_t 	dbn;	/* Sector number of the cached block */
+	u_int32_t	cache_state; /* INVALID | VALID | DIRTY */
+} __attribute__ ((aligned(16)));
+#endif
 
-#define MD_BLOCKS_PER_SECTOR		(512 / (sizeof(struct flash_cacheblock)))
-#define INDEX_TO_MD_SECTOR(INDEX)	((INDEX) / MD_BLOCKS_PER_SECTOR)
-#define INDEX_TO_MD_SECTOR_OFFSET(INDEX)	((INDEX) % MD_BLOCKS_PER_SECTOR)
+
+#define MD_BLOCK_BYTES(DMC)		((DMC)->md_block_size * 512)
+#define MD_SECTORS_PER_BLOCK(DMC)	((DMC)->md_block_size)
+#define MD_SLOTS_PER_BLOCK(DMC)		(MD_BLOCK_BYTES(DMC) / (sizeof(struct flash_cacheblock)))
+#define INDEX_TO_MD_BLOCK(DMC, INDEX)	((INDEX) / MD_SLOTS_PER_BLOCK(DMC))
+#define INDEX_TO_MD_BLOCK_OFFSET(DMC, INDEX)	((INDEX) % MD_SLOTS_PER_BLOCK(DMC))
 
 #define METADATA_IO_BLOCKSIZE		(256*1024)
-#define METADATA_IO_BLOCKSIZE_SECT	(METADATA_IO_BLOCKSIZE / 512)
+#define METADATA_IO_NUM_BLOCKS(dmc)	(METADATA_IO_BLOCKSIZE / MD_BLOCK_BYTES(dmc))
+
+#define INDEX_TO_CACHE_ADDR(DMC, INDEX)	\
+	(((sector_t)(INDEX) << (DMC)->block_shift) + (DMC)->md_blocks * MD_SECTORS_PER_BLOCK((DMC)))
 
 #ifdef __KERNEL__
 
@@ -350,7 +380,7 @@ struct flash_cacheblock {
  * one metadata IO per sector can be in progress at any given point in 
  * time
  */
-struct cache_md_sector_head {
+struct cache_md_block_head {
 	u_int32_t		nr_in_prog;
 	struct kcached_job	*queued_updates, *md_io_inprog;
 };
