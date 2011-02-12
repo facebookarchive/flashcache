@@ -110,6 +110,9 @@ a larger flashcache metadata blocksize. Version 2 maintains backwards compatibil
 for caches created with Version 1. For these cases, a metadata blocksize of 512
 will continue to be used.
 
+flashcache_create -m can be used to optionally configure the metadata blocksize.
+Defaults to 4KB.
+
 Ideal choices for the metadata blocksize are 4KB (default) or 8KB. There is 
 little benefit to choosing a metadata blocksize greater than 8KB. The choice 
 of metadata blocksize is subject to the following rules :
