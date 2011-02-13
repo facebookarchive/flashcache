@@ -133,6 +133,8 @@ Advantages of choosing a larger (than 512b) metadata blocksize :
   reducing metadata updates, small ssd writes, reducing write amplification
   and higher ssd lifetimes.
 
+Thanks due to Earle Philhower of Virident for this feature !
+
 FlashCache Sysctls :
 ==================
 These sysctls will apply to all cache devices on the node.
