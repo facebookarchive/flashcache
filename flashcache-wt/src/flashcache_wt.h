@@ -70,6 +70,8 @@
 #define CACHEREADINPROG	3	/* cache read in progress, don't recycle */
 #define INPROG_INVALID	4	/* Write invalidated during a refill */
 
+#define DEV_PATHLEN	128
+
 /*
  * Cache context
  */
@@ -110,6 +112,13 @@ struct cache_c {
 	unsigned long checksum_valid;
 	unsigned long checksum_invalid;
 	unsigned long cache_wr_replace;
+	unsigned long uncached_reads;
+	unsigned long uncached_writes;
+	unsigned long cache_reads, cache_writes;
+	unsigned long disk_reads, disk_writes;	
+
+	char cache_devname[DEV_PATHLEN];
+	char disk_devname[DEV_PATHLEN];
 };
 
 /* Cache block metadata structure */
