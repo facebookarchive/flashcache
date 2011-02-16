@@ -346,6 +346,7 @@ do_io(struct kcached_job *job)
 	/* Write to cache device */
 	flashcache_wt_store_checksum(job);
 	dmc->checksum_store++;
+	dmc->cache_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_wt_io_callback, job);
 	VERIFY(r == 0); /* In our case, dm_io_async_bvec() must always return 0 */
@@ -617,6 +618,7 @@ cache_read_miss(struct cache_c *dmc, struct bio* bio,
 		job->rw = READSOURCE; /* Fetch data from the source device */
 		DPRINTK("Queue job for %llu", bio->bi_sector);
 		atomic_inc(&dmc->nr_jobs);
+		dmc->disk_reads++;
 		dm_io_async_bvec(1, &job->disk, READ,
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_wt_io_callback, job);
@@ -661,6 +663,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 			job->rw = READCACHE; /* Fetch data from the source device */
 			DPRINTK("Queue job for %llu", bio->bi_sector);
 			atomic_inc(&dmc->nr_jobs);
+			dmc->cache_reads++;
 			dm_io_async_bvec(1, &job->cache, READ,
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_wt_io_callback, job);
@@ -818,6 +821,7 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	job->rw = WRITESOURCE; /* Write data to the source device */
 	DPRINTK("Queue job for %llu", bio->bi_sector);
 	atomic_inc(&job->dmc->nr_jobs);
+	dmc->disk_writes++;
 	dm_io_async_bvec(1, &job->disk, WRITE, bio->bi_io_vec + bio->bi_idx,
 			 flashcache_wt_io_callback, job);
 	return;
@@ -878,6 +882,10 @@ flashcache_wt_uncached_io_callback(unsigned long error, void *context)
         unsigned long flags;
 
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	if (bio_data_dir(job->bio) == READ)
+		dmc->uncached_reads++;
+	else
+		dmc->uncached_writes++;		
 	(void)cache_invalidate_blocks(dmc, job->bio);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	flashcache_bio_endio(job->bio, error);
@@ -898,12 +906,38 @@ flashcache_wt_start_uncached_io(struct cache_c *dmc, struct bio *bio)
 		return;
         }
 	atomic_inc(&dmc->nr_jobs);
+	if (bio_data_dir(job->bio) == READ)
+		dmc->disk_reads++;
+	else
+		dmc->disk_writes++;			
 	dm_io_async_bvec(1, &job->disk,
 			 ((is_write) ? WRITE : READ),
 			 bio->bi_io_vec + bio->bi_idx,
 			 flashcache_wt_uncached_io_callback, job);
 }
 
+static int inline
+flashcache_wt_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
+		      char *dmc_dname, sector_t tilen)
+{
+	int rc;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else
+#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else 
+	rc = dm_get_device(ti, pth, 0, tilen,
+			   dm_table_get_mode(ti->table), dmd);
+#endif
+#endif
+	if (!rc)
+		strncpy(dmc_dname, pth, DEV_PATHLEN);
+	return rc;
+}
 
 /*
  * Construct a cache mapping.
@@ -928,7 +962,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad;
 	}
 
-	dmc = kmalloc(sizeof(*dmc), GFP_KERNEL);
+	dmc = kzalloc(sizeof(*dmc), GFP_KERNEL);
 	if (dmc == NULL) {
 		ti->error = "flashcache-wt: Failed to allocate cache context";
 		r = ENOMEM;
@@ -937,36 +971,13 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	dmc->tgt = ti;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#else
-#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#else
-	r = dm_get_device(ti, argv[0], 0, ti->len,
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-#endif
-#endif
-	if (r) {
-		ti->error = "flashcache-wt: Source device lookup failed";
+	if (flashcache_wt_get_dev(ti, argv[0], &dmc->disk_dev, 
+			       dmc->disk_devname, ti->len)) {
+		ti->error = "flashcache-wt: Disk device lookup failed";
 		goto bad1;
 	}
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#else
-#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
-	r = dm_get_device(ti, argv[0],
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#else
-	r = dm_get_device(ti, argv[0], 0, ti->len,
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-#endif
-#endif
-	if (r) {
+	if (flashcache_wt_get_dev(ti, argv[1], &dmc->cache_dev,
+			       dmc->cache_devname, 0)) {
 		ti->error = "flashcache-wt: Cache device lookup failed";
 		goto bad2;
 	}
@@ -1191,10 +1202,16 @@ flashcache_wt_status_info(struct cache_c *dmc, status_type_t type,
 	DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n" \
 	       "\treplacement(%lu), write replacement(%lu)\n" \
 	       "\tread invalidates(%lu), write invalidates(%lu)\n" \
+	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
+	       "\tdisk reads(%lu), disk writes(%lu)\n" \
+	       "\tcache reads(%lu), cache writes(%lu)\n" \
 	       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
 	       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
-	       dmc->rd_invalidates, dmc->wr_invalidates, dmc->checksum_store, 
-	       dmc->checksum_valid, dmc->checksum_invalid);
+	       dmc->rd_invalidates, dmc->wr_invalidates, 
+	       dmc->uncached_reads, dmc->uncached_writes,
+	       dmc->disk_reads, dmc->disk_writes,
+	       dmc->cache_reads, dmc->cache_writes,
+	       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
 }
 
 static void
@@ -1210,8 +1227,10 @@ flashcache_wt_status_table(struct cache_c *dmc, status_type_t type,
 	else 
 		cache_pct = 0;
 	DMEMIT("conf:\n"\
+	       "\tssd dev (%s), disk dev (%s)\n"                        \
 	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
+	       dmc->cache_devname, dmc->disk_devname,
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, cache_pct);
