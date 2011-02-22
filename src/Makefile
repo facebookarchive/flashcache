@@ -1,4 +1,4 @@
-EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
+EXTRA_CFLAGS=-I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux -I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
 UTILS_CFLAGS=-I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
 
 KERNEL_TREE ?= /lib/modules/$(shell uname -r)/build
