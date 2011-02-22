@@ -483,7 +483,8 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	int new_inserts = 0;
 	struct dbn_index_pair *set_dirty_list = NULL;
 	int ix, nr_set_dirty;
-	
+	struct cacheblock *cacheblk;
+			
 	if (unlikely(*nr_writes == 0))
 		return;
 	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
@@ -497,8 +498,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	}
 	nr_set_dirty = 0;
 	for (ix = start_index ; ix < end_index ; ix++) {
-		struct cacheblock *cacheblk = &dmc->cache[ix];
-
+		cacheblk = &dmc->cache[ix];
 		/*
 		 * Any DIRTY block in "writes_list" will be marked as 
 		 * DISKWRITEINPROG already, so we'll skip over those here.
@@ -514,10 +514,10 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	sort(set_dirty_list, nr_set_dirty, sizeof(struct dbn_index_pair),
 	     cmp_dbn, swap_dbn_index_pair);
 	for (ix = 0 ; ix < nr_set_dirty ; ix++) {
-		struct cacheblock *cacheblk = &dmc->cache[set_dirty_list[ix].index];
 		int back_merge, k;
 		int i;
 
+		cacheblk = &dmc->cache[set_dirty_list[ix].index];
 		back_merge = -1;
 		VERIFY((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY);
 		for (i = 0 ; i < *nr_writes ; i++) {
@@ -539,6 +539,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 			VERIFY(j < dmc->assoc);
 			if (insert) {
 				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, set_dirty_list[ix].index);
 				/* 
 				 * Shift down everthing from j to ((*nr_writes) - 1) to
 				 * make room for the new entry. And add the new entry.
@@ -568,9 +569,11 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 			for (k = ix - 1 ; k >= 0 ; k--) {
 				int n;
 
-				if (set_dirty_list[k].dbn + dmc->block_size != writes_list[back_merge].dbn)
+				if (set_dirty_list[k].dbn + dmc->block_size != 
+				    writes_list[back_merge].dbn)
 					break;
 				dmc->cache[set_dirty_list[k].index].cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, set_dirty_list[k].index);
 				for (n = (*nr_writes) - 1 ; n >= back_merge ; n--)
 					writes_list[n + 1] = writes_list[n];
 				writes_list[back_merge].dbn = set_dirty_list[k].dbn;

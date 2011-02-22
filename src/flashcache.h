@@ -125,9 +125,11 @@ struct cacheblock {
 struct cache_set {
 	u_int32_t		set_fifo_next;
 	u_int32_t		set_clean_next;
-	u_int32_t		clean_inprog;
-	u_int32_t		nr_dirty;
+	u_int16_t		clean_inprog;
+	u_int16_t		nr_dirty;
 	u_int16_t		lru_head, lru_tail;
+	u_int16_t		dirty_fallow;
+	unsigned long 		fallow_tstamp;
 };
 
 /*
@@ -199,6 +201,7 @@ struct cache_c {
 #endif
 	unsigned long enqueues;		/* enqueues on pending queue */
 	unsigned long cleanings;
+	unsigned long fallow_cleanings;
 	unsigned long noroom;		/* No room in set */
 	unsigned long md_write_dirty;	/* Metadata sector writes dirtying block */
 	unsigned long md_write_clean;	/* Metadata sector writes cleaning block */
@@ -214,12 +217,7 @@ struct cache_c {
 	unsigned long ssd_reads, ssd_writes;
 	unsigned long uncached_io_requeue;
 
-	unsigned long clean_set_calls;
-	unsigned long clean_set_less_dirty;
-	unsigned long clean_set_fails;
 	unsigned long clean_set_ios;
-	unsigned long set_limit_reached;
-	unsigned long total_limit_reached;
 	unsigned long pending_jobs_count;
 
 	/* Errors */
@@ -295,7 +293,18 @@ struct pending_job {
 #define CACHEREADINPROG		0x0010	/* Read from cache in progress */
 #define CACHEWRITEINPROG	0x0020	/* Write to cache in progress */
 #define DIRTY			0x0040	/* Dirty, needs writeback to disk */
+/*
+ * Old and Dirty blocks are cleaned with a Clock like algorithm. The leading hand
+ * marks DIRTY_FALLOW_1. 60 seconds (default) later, the trailing hand comes along and
+ * marks DIRTY_FALLOW_2 if DIRTY_FALLOW_1 is already set. If the block was used in the 
+ * interim, (DIRTY_FALLOW_1|DIRTY_FALLOW_2) is cleared. Any block that has both 
+ * DIRTY_FALLOW_1 and DIRTY_FALLOW_2 marked is considered old and is eligible 
+ * for cleaning.
+ */
+#define DIRTY_FALLOW_1		0x0080	
+#define DIRTY_FALLOW_2		0x0100
 
+#define FALLOW_DOCLEAN		(DIRTY_FALLOW_1 | DIRTY_FALLOW_2)
 #define BLOCK_IO_INPROG	(DISKREADINPROG | DISKWRITEINPROG | CACHEREADINPROG | CACHEWRITEINPROG)
 
 /* Cache metadata is read by Flashcache utilities */
@@ -440,6 +449,7 @@ void flashcache_dtr(struct dm_target *ti);
 
 int flashcache_status(struct dm_target *ti, status_type_t type,
 		      char *result, unsigned int maxlen);
+
 struct kcached_job *flashcache_alloc_cache_job(void);
 void flashcache_free_cache_job(struct kcached_job *job);
 struct pending_job *flashcache_alloc_pending_job(struct cache_c *dmc);
@@ -504,6 +514,9 @@ int dm_io_async_bvec(unsigned int num_regions,
 			    struct bio_vec *bvec, io_notify_fn fn, 
 			    void *context);
 #endif
+
+void flashcache_detect_fallow(struct cache_c *dmc, int index);
+void flashcache_clear_fallow(struct cache_c *dmc, int index);
 
 #endif /* __KERNEL__ */
 

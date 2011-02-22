@@ -162,10 +162,14 @@ dev.flashcache.dirty_thresh_pct:
 dev.flashcache.do_sync: 
 	Schedule cleaning of all dirty blocks in the cache. 
 dev.flashcache.stop_sync: 
-	Stop the sync in progress.
-dev.flashcache.cache_all:
+	Stop the sync in progress.dev.flashcache.cache_all:
 	Global caching mode to cache everything or cache nothing.
 	See section on Caching Controls. Defaults to "cache everything".
+dev.flashcache.fallow_delay:
+	In seconds. Clean dirty blocks that have been "idle" (not 
+	read or written) for fallow_delay seconds. Default is 60 
+	seconds. 
+	Setting this to 0 disables idle cleaning completely.
 
 There is little reason to change these :
 

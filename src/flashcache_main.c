@@ -120,6 +120,51 @@ int dm_io_async_bvec(unsigned int num_regions,
 }
 #endif
 
+/* 
+ * A simple 2-hand clock like algorithm is used to identify dirty blocks 
+ * that lie fallow in the cache and thus are candidates for cleaning. 
+ * Note that we could have such fallow blocks in sets where the dirty blocks 
+ * is under the configured threshold.
+ * The hands are spaced 60 seconds apart (one sweep runs every 60 seconds).
+ * The interval is configurable via a sysctl. 
+ * Blocks are moved to DIRTY_FALLOW_1, if they are found to be in DIRTY_FALLOW_1
+ * for 60 seconds or more, they are moved to DIRTY_FALLOW_1 | DIRTY_FALLOW_2, at
+ * which point they are eligible for cleaning. Of course any intervening use
+ * of the block within the interval turns off these 2 bits.
+ * 
+ * Cleaning of these blocks happens from the flashcache_clean_set() function.
+ */
+void
+flashcache_detect_fallow(struct cache_c *dmc, int index)
+{
+	struct cacheblock *cacheblk = &dmc->cache[index];
+	
+	if ((cacheblk->cache_state & DIRTY) &&
+	    ((cacheblk->cache_state & BLOCK_IO_INPROG) == 0)) {
+		if ((cacheblk->cache_state & DIRTY_FALLOW_1) == 0)
+			cacheblk->cache_state |= DIRTY_FALLOW_1;
+		else if ((cacheblk->cache_state & DIRTY_FALLOW_2) == 0) {
+			dmc->cache_sets[index / dmc->assoc].dirty_fallow++;
+			cacheblk->cache_state |= DIRTY_FALLOW_2;
+		}
+	}
+}
+
+void
+flashcache_clear_fallow(struct cache_c *dmc, int index)
+{
+	struct cacheblock *cacheblk = &dmc->cache[index];
+	int set = index / dmc->assoc;
+	
+	if (cacheblk->cache_state & FALLOW_DOCLEAN) {
+		if (cacheblk->cache_state & DIRTY_FALLOW_2) {
+			VERIFY(dmc->cache_sets[set].dirty_fallow > 0);
+			dmc->cache_sets[set].dirty_fallow--;
+		}
+		cacheblk->cache_state &= ~FALLOW_DOCLEAN;
+	}
+}
+
 void 
 flashcache_io_callback(unsigned long error, void *context)
 {
@@ -317,6 +362,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 	if (cacheblk->cache_state & DIRTY) {
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		cacheblk->cache_state |= DISKWRITEINPROG;
+		flashcache_clear_fallow(dmc, index);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		flashcache_dirty_writeback(dmc, index);
 		goto out;
@@ -426,6 +472,11 @@ find_valid_dbn(struct cache_c *dmc, sector_t dbn,
 			if (sysctl_flashcache_reclaim_policy == FLASHCACHE_LRU &&
 			    ((dmc->cache[i].cache_state & BLOCK_IO_INPROG) == 0))
 				flashcache_reclaim_lru_movetail(dmc, i);
+			/* 
+			 * If the block was DIRTY and earmarked for cleaning because it was old, make 
+			 * the block young again.
+			 */
+			flashcache_clear_fallow(dmc, i);
 			return;
 		}
 	}
@@ -443,6 +494,7 @@ find_invalid_dbn(struct cache_c *dmc, int start_index)
 		if (dmc->cache[i].cache_state == INVALID) {
 			if (sysctl_flashcache_reclaim_policy == FLASHCACHE_LRU)
 				flashcache_reclaim_lru_movetail(dmc, i);
+			VERIFY((dmc->cache[i].cache_state & FALLOW_DOCLEAN) == 0);
 			return i;
 		}
 	}
@@ -454,18 +506,21 @@ static void
 find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 {
 	int set = start_index / dmc->assoc;
+	struct cache_set *cache_set = &dmc->cache_sets[set];
+	struct cacheblock *cacheblk;
 	
 	if (sysctl_flashcache_reclaim_policy == FLASHCACHE_FIFO) {
 		int end_index = start_index + dmc->assoc;
 		int slots_searched = 0;
 		int i;
 
-		i = dmc->cache_sets[set].set_fifo_next;
+		i = cache_set->set_fifo_next;
 		while (slots_searched < dmc->assoc) {
 			VERIFY(i >= start_index);
 			VERIFY(i < end_index);
 			if (dmc->cache[i].cache_state == VALID) {
 				*index = i;
+				VERIFY((dmc->cache[*index].cache_state & FALLOW_DOCLEAN) == 0);
 				break;
 			}
 			slots_searched++;
@@ -476,18 +531,18 @@ find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 		i++;
 		if (i == end_index)
 			i = start_index;
-		dmc->cache_sets[set].set_fifo_next = i;
+		cache_set->set_fifo_next = i;
 	} else { /* flashcache_reclaim_policy == FLASHCACHE_LRU */
-		struct cacheblock *cacheblk;
 		int lru_rel_index;
 
-		lru_rel_index = dmc->cache_sets[set].lru_head;
+		lru_rel_index = cache_set->lru_head;
 		while (lru_rel_index != FLASHCACHE_LRU_NULL) {
 			cacheblk = &dmc->cache[lru_rel_index + start_index];
 			if (cacheblk->cache_state == VALID) {
 				VERIFY((cacheblk - &dmc->cache[0]) == 
 				       (lru_rel_index + start_index));
 				*index = cacheblk - &dmc->cache[0];
+				VERIFY((dmc->cache[*index].cache_state & FALLOW_DOCLEAN) == 0);
 				flashcache_reclaim_lru_movetail(dmc, *index);
 				break;
 			}
@@ -964,23 +1019,51 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 }
 
 /*
- * Clean dirty blocks in this set as needed.
+ * This function encodes the background disk cleaning logic.
+ * Background disk cleaning is triggered for 2 reasons.
+ A) Dirty blocks are lying fallow in the set, making them good 
+    candidates for being cleaned.
+ B) This set has dirty blocks over the configured threshold 
+    for a set.
+ * (A) takes precedence over (B). Fallow dirty blocks are cleaned
+ * first.
+ * The cleaning of disk blocks is subject to the write limits per
+ * set and across the cache, which this function enforces.
  *
- * 1) Select the n blocks that we want to clean (choosing whatever policy), sort them.
- * 2) Then sweep the entire set looking for other DIRTY blocks that can be tacked onto
- * any of these blocks to form larger contigous writes. The idea here is that if you 
- * are going to do a write anyway, then we might as well opportunistically write out 
- * any contigous blocks for free (Bob's idea).
+ * 1) Select the n blocks that we want to clean (choosing whatever policy), 
+ *    sort them.
+ * 2) Then sweep the entire set looking for other DIRTY blocks that can be 
+ *    tacked onto any of these blocks to form larger contigous writes. 
+ *    The idea here is that if you are going to do a write anyway, then we 
+ *    might as well opportunistically write out any contigous blocks for 
+ *    free.
  */
+
+/* Are we under the limits for disk cleaning ? */
+static inline int
+flashcache_can_clean(struct cache_c *dmc, 
+		     struct cache_set *cache_set,
+		     int nr_writes)
+{
+	return ((cache_set->clean_inprog + nr_writes) < dmc->max_clean_ios_set &&
+		(nr_writes + dmc->clean_inprog) < dmc->max_clean_ios_total);
+}
+
+extern int sysctl_fallow_delay;
+
 void
 flashcache_clean_set(struct cache_c *dmc, int set)
 {
 	unsigned long flags;
-	int to_clean = 0;
+	int threshold_clean = 0;
 	struct dbn_index_pair *writes_list;
-	int nr_writes = 0;
-	int start_index = set * dmc->assoc;
-	
+	int nr_writes = 0, i;
+	int start_index = set * dmc->assoc; 
+	int end_index = start_index + dmc->assoc;
+	struct cache_set *cache_set = &dmc->cache_sets[set];
+	struct cacheblock *cacheblk;
+	int do_delayed_clean = 0;
+
 	/* 
 	 * If a (fast) removal of this device is in progress, don't kick off 
 	 * any more cleanings. This isn't sufficient though. We still need to
@@ -1000,31 +1083,61 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		dmc->memory_alloc_errors++;
 		return;
 	}
-	dmc->clean_set_calls++;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
-	if (dmc->cache_sets[set].nr_dirty < dmc->dirty_thresh_set) {
-		dmc->clean_set_less_dirty++;
-		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		kfree(writes_list);
-		return;
-	} else
-		to_clean = dmc->cache_sets[set].nr_dirty - dmc->dirty_thresh_set;
+	/* 
+	 * Before we try to clean any blocks, check the last time the fallow block
+	 * detection was done. If it has been more than 60 seconds, make a sweep
+	 * through the set to detect (mark) fallow blocks.
+	 */
+	if (sysctl_fallow_delay && time_before(cache_set->fallow_tstamp, jiffies)) {
+		for (i = start_index ; i < end_index ; i++)
+			flashcache_detect_fallow(dmc, i);
+		cache_set->fallow_tstamp = jiffies + sysctl_fallow_delay * HZ;
+	}
+	/* If there are any dirty fallow blocks, clean them first */
+	for (i = start_index ; cache_set->dirty_fallow > 0 && i < end_index ; i++) {
+		cacheblk = &dmc->cache[i];
+		if (!(cacheblk->cache_state & DIRTY_FALLOW_2))
+			continue;
+		if (!flashcache_can_clean(dmc, cache_set, nr_writes)) {
+			/*
+			 * There are fallow blocks that need cleaning, but we can't clean 
+			 * them this pass, schedule delayed cleaning later.
+			 */
+			do_delayed_clean = 1;
+			goto out;
+		}
+		VERIFY(cacheblk->cache_state & DIRTY);
+		VERIFY((cacheblk->cache_state & BLOCK_IO_INPROG) == 0);
+		cacheblk->cache_state |= DISKWRITEINPROG;
+		flashcache_clear_fallow(dmc, i);
+		writes_list[nr_writes].dbn = cacheblk->dbn;
+		writes_list[nr_writes].index = i;
+		dmc->fallow_cleanings++;
+		nr_writes++;
+	}
+	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
+	    !flashcache_can_clean(dmc, cache_set, nr_writes))
+		goto out;
+	/*
+	 * We picked up all the dirty fallow blocks we can. We can still clean more to 
+	 * remain under the dirty threshold. Clean some more blocks.
+	 */
+	threshold_clean = cache_set->nr_dirty - dmc->dirty_thresh_set;
 	if (sysctl_flashcache_reclaim_policy == FLASHCACHE_FIFO) {
-		int i, scanned;
-		int start_index, end_index;
-
-		start_index = set * dmc->assoc;
-		end_index = start_index + dmc->assoc;
+		int scanned;
+		
 		scanned = 0;
-		i = dmc->cache_sets[set].set_clean_next;
+		i = cache_set->set_clean_next;
 		DPRINTK("flashcache_clean_set: Set %d", set);
 		while (scanned < dmc->assoc &&
-		       ((dmc->cache_sets[set].clean_inprog + nr_writes) < dmc->max_clean_ios_set) &&
-		       ((nr_writes + dmc->clean_inprog) < dmc->max_clean_ios_total) &&
-		       nr_writes < to_clean) {
-			if ((dmc->cache[i].cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {	
-				dmc->cache[i].cache_state |= DISKWRITEINPROG;
-				writes_list[nr_writes].dbn = dmc->cache[i].dbn;
+		       flashcache_can_clean(dmc, cache_set, nr_writes) &&
+		       nr_writes < threshold_clean) {
+			cacheblk = &dmc->cache[i];
+			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {	
+				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, i);
+				writes_list[nr_writes].dbn = cacheblk->dbn;
 				writes_list[nr_writes].index = i;
 				nr_writes++;
 			}
@@ -1033,19 +1146,18 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 			if (i == end_index)
 				i = start_index;
 		}
-		dmc->cache_sets[set].set_clean_next = i;
+		cache_set->set_clean_next = i;
 	} else { /* flashcache_reclaim_policy == FLASHCACHE_LRU */
-		struct cacheblock *cacheblk;
 		int lru_rel_index;
 
-		lru_rel_index = dmc->cache_sets[set].lru_head;
+		lru_rel_index = cache_set->lru_head;
 		while (lru_rel_index != FLASHCACHE_LRU_NULL && 
-		       ((dmc->cache_sets[set].clean_inprog + nr_writes) < dmc->max_clean_ios_set) &&
-		       ((nr_writes + dmc->clean_inprog) < dmc->max_clean_ios_total) &&
-		       nr_writes < to_clean) {
-			cacheblk = &dmc->cache[lru_rel_index + start_index];			
+		       flashcache_can_clean(dmc, cache_set, nr_writes) &&
+		       nr_writes < threshold_clean) {
+			cacheblk = &dmc->cache[lru_rel_index + start_index];
 			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
 				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, i);
 				writes_list[nr_writes].dbn = cacheblk->dbn;
 				writes_list[nr_writes].index = cacheblk - &dmc->cache[0];
 				nr_writes++;
@@ -1053,27 +1165,19 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 			lru_rel_index = cacheblk->lru_next;
 		}
 	}
+out:
 	if (nr_writes > 0) {
-		int i;
-
 		flashcache_merge_writes(dmc, writes_list, &nr_writes, set);
 		dmc->clean_set_ios += nr_writes;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		for (i = 0 ; i < nr_writes ; i++)
 			flashcache_dirty_writeback(dmc, writes_list[i].index);
 	} else {
-		int do_delayed_clean = 0;
-
-		if (dmc->cache_sets[set].nr_dirty > dmc->dirty_thresh_set)
+		if (cache_set->nr_dirty > dmc->dirty_thresh_set)
 			do_delayed_clean = 1;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		if (dmc->cache_sets[set].clean_inprog >= dmc->max_clean_ios_set)
-			dmc->set_limit_reached++;
-		if (dmc->clean_inprog >= dmc->max_clean_ios_total)
-			dmc->total_limit_reached++;
 		if (do_delayed_clean)
 			schedule_delayed_work(&dmc->delayed_clean, 1*HZ);
-		dmc->clean_set_fails++;
 	}
 	kfree(writes_list);
 }
@@ -1308,6 +1412,7 @@ flashcache_inval_block_set(struct cache_c *dmc, int set, struct bio *bio, int rw
 				 * at the cost of a context switch.
 				 */
 				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, i);
 				spin_unlock_irq(&dmc->cache_spin_lock);
 				flashcache_dirty_writeback(dmc, i); /* Must inc nr_jobs */
 				spin_lock_irq(&dmc->cache_spin_lock);
@@ -1642,6 +1747,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 	struct cacheblock *cacheblk = &dmc->cache[index];
 	int device_removal = 0;
 	
+	VERIFY((cacheblk->cache_state & FALLOW_DOCLEAN) == 0);
 	DPRINTK("flashcache_dirty_writeback_sync: Index %d", index);
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	VERIFY((cacheblk->cache_state & BLOCK_IO_INPROG) == DISKWRITEINPROG);
@@ -1744,8 +1850,9 @@ flashcache_sync_blocks(struct cache_c *dmc)
 		cacheblk = &dmc->cache[index];
 		if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
 			cacheblk->cache_state |= DISKWRITEINPROG;
+			flashcache_clear_fallow(dmc, index);
 			writes_list[nr_writes].dbn = cacheblk->dbn;
-			writes_list[nr_writes].index = cacheblk - &dmc->cache[0];
+			writes_list[nr_writes].index = index;
 			set = index / dmc->assoc;
 			nr_writes++;
 		}

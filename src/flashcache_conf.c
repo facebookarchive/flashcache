@@ -78,6 +78,7 @@ int sysctl_pid_expiry_check = 60;
 int sysctl_pid_do_expiry = 0;
 int sysctl_flashcache_fast_remove = 0;
 int sysctl_cache_all = 1;
+int sysctl_fallow_delay = 60;
 
 struct cache_c *cache_list_head = NULL;
 struct work_struct _kcached_wq;
@@ -459,6 +460,16 @@ static ctl_table flashcache_table[] = {
 #endif
 		.procname	= "cache_all",
 		.data		= &sysctl_cache_all,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		.ctl_name	= CTL_UNNUMBERED,
+#endif
+		.procname	= "fallow_delay",
+		.data		= &sysctl_fallow_delay,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
@@ -1458,6 +1469,8 @@ init:
 		dmc->cache_sets[i].set_clean_next = i * dmc->assoc;
 		dmc->cache_sets[i].nr_dirty = 0;
 		dmc->cache_sets[i].clean_inprog = 0;
+		dmc->cache_sets[i].dirty_fallow = 0;
+		dmc->cache_sets[i].fallow_tstamp = jiffies;
 		dmc->cache_sets[i].lru_tail = FLASHCACHE_LRU_NULL;
 		dmc->cache_sets[i].lru_head = FLASHCACHE_LRU_NULL;
 	}
@@ -1563,6 +1576,7 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->rd_invalidates = 0;
 	dmc->pending_inval = 0;
 	dmc->enqueues = 0;
+	dmc->fallow_cleanings = 0;
 	dmc->cleanings = 0;
 	dmc->noroom = 0;
 	dmc->md_write_dirty = 0;
@@ -1574,9 +1588,7 @@ flashcache_zero_stats(struct cache_c *dmc)
 	dmc->checksum_valid = 0;
 	dmc->checksum_invalid = 0;
 #endif
-	dmc->clean_set_calls = dmc->clean_set_less_dirty = 0;
-	dmc->clean_set_fails = dmc->clean_set_ios = 0;
-	dmc->set_limit_reached = dmc->total_limit_reached = 0;
+	dmc->clean_set_ios = 0;
 	dmc->front_merge = dmc->back_merge = 0;
 	dmc->pid_drops = dmc->pid_adds = dmc->pid_dels = dmc->expiry = 0;
 	dmc->uncached_reads = dmc->uncached_writes = 0;
@@ -1619,25 +1631,27 @@ flashcache_dtr(struct dm_target *ti)
 		DMINFO("stats: reads(%lu), writes(%lu), read hits(%lu), write hits(%lu), " \
 		       "read hit percent(%ld), replacement(%lu), write invalidates(%lu), " \
 		       "read invalidates(%lu), write replacement(%lu), pending enqueues(%lu), " \
-		       "pending inval(%lu) cleanings(%lu), " \
+		       "pending inval(%lu) cleanings(%lu), fallow cleanings(%lu) " \
 		       "checksum invalid(%ld), checksum store(%ld), checksum valid(%ld)" \
 		       "front merge(%ld) back merge(%ld)",
 		       dmc->reads, dmc->writes, dmc->read_hits, dmc->write_hits,
 		       dmc->read_hits*100/dmc->reads,
 		       dmc->replace, dmc->wr_invalidates, dmc->rd_invalidates,
-		       dmc->wr_replace, dmc->enqueues, dmc->pending_inval, dmc->cleanings,
+		       dmc->wr_replace, dmc->enqueues, 
+		       dmc->pending_inval, dmc->cleanings, dmc->fallow_cleanings,
 		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid,
 		       dmc->front_merge, dmc->back_merge);
 #else
 		DMINFO("stats: reads(%lu), writes(%lu), read hits(%lu), write hits(%lu), " \
 		       "read hit percent(%ld), replacement(%lu), write invalidates(%lu), " \
 		       "read invalidates(%lu), write replacement(%lu), pending enqueues(%lu), " \
-		       "pending inval(%lu) cleanings(%lu)" \
+		       "pending inval(%lu) cleanings(%lu) fallow cleanings(%lu)" \
 		       "front merge(%ld) back merge(%ld)",
 		       dmc->reads, dmc->writes, dmc->read_hits, dmc->write_hits,
 		       dmc->read_hits*100/dmc->reads,
 		       dmc->replace, dmc->wr_invalidates, dmc->rd_invalidates,
-		       dmc->wr_replace, dmc->enqueues, dmc->pending_inval, dmc->cleanings,
+		       dmc->wr_replace, dmc->enqueues, 
+		       dmc->pending_inval, dmc->cleanings, dmc->fallow_cleanings,
 		       dmc->front_merge, dmc->back_merge);
 #endif
 
@@ -1709,7 +1723,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-	       "\tcleanings(%lu), no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tcleanings(%lu) fallow cleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
@@ -1721,7 +1735,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->cleanings, dmc->fallow_cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
@@ -1734,7 +1748,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu) pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu) metadata cleans(%lu)\n" \
 	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-	       "\tcleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tcleanings(%lu) fallow cleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
@@ -1745,7 +1759,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->cleanings, dmc->fallow_cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);

@@ -99,6 +99,11 @@ strives to keep the percentage of dirty blocks in each set below the
 dirty threshold. When the dirty blocks in a set exceeds the dirty
 threshold, the set is eligible for cleaning.
 
+Dirty blocks are also cleaned based on "idleness" By defalt a 
+dirty block not read or written for 60 seconds 
+(dev.flashcache.fallow_delay) will be cleaned. To disable idle 
+cleaning set that value to 0.
+
 DIRTY blocks are selected for cleaning based on the replacement policy
 (FIFO vs LRU). Once we have a target set of blocks to clean, we sort
 these blocks, search for other contigous dirty blocks in the set
