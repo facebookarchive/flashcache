@@ -108,6 +108,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
+	new->expiry = jiffies + sysctl_pid_expiry_check * HZ;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	if (which_list == FLASHCACHE_WHITELIST) {
 		if (dmc->num_whitelist_pids > sysctl_flashcache_max_pids)
