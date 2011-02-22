@@ -171,7 +171,10 @@ struct cache_c {
 	/* XXX - Updates of nr_jobs should happen inside the lock. But doing it outside
 	   is OK since the filesystem is unmounted at this point */
 	atomic_t nr_jobs;		/* Number of I/O jobs */
-	atomic_t fast_remove_in_prog;
+
+#define SLOW_REMOVE    1                                                                                    
+#define FAST_REMOVE    2
+	atomic_t remove_in_prog;
 
 	int	dirty_thresh_set;	/* Per set dirty threshold to start cleaning */
 	int	max_clean_ios_set;	/* Max cleaning IOs per set */

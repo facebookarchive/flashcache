@@ -976,9 +976,9 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		sysctl_flashcache_error_inject &= ~DIRTY_WRITEBACK_JOB_ALLOC_FAIL;
 	}
 	/*
-	 * If the device is being (fast) removed, do not kick off any more cleanings.
+	 * If the device is being removed, do not kick off any more cleanings.
 	 */
-	if (unlikely(atomic_read(&dmc->fast_remove_in_prog))) {
+	if (unlikely(atomic_read(&dmc->remove_in_prog))) {
 		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %lu", 
 		      cacheblk->dbn);
 		if (job)
@@ -1065,12 +1065,12 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	int do_delayed_clean = 0;
 
 	/* 
-	 * If a (fast) removal of this device is in progress, don't kick off 
+	 * If a removal of this device is in progress, don't kick off 
 	 * any more cleanings. This isn't sufficient though. We still need to
 	 * stop cleanings inside flashcache_dirty_writeback() because we could
 	 * have started a device remove after tested this here.
 	 */
-	if (atomic_read(&dmc->fast_remove_in_prog))
+	if (atomic_read(&dmc->remove_in_prog))
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (unlikely(sysctl_flashcache_error_inject & WRITES_LIST_ALLOC_FAIL)) {
@@ -1759,7 +1759,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 	/*
 	 * If the device is being (fast) removed, do not kick off any more cleanings.
 	 */
-	if (unlikely(atomic_read(&dmc->fast_remove_in_prog))) {
+	if (unlikely(atomic_read(&dmc->remove_in_prog) == FAST_REMOVE)) {
 		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %lu", 
 		      cacheblk->dbn);
 		if (job)
@@ -1819,7 +1819,7 @@ flashcache_sync_blocks(struct cache_c *dmc)
 	 * stop cleanings inside flashcache_dirty_writeback_sync() because we could
 	 * have started a device remove after tested this here.
 	 */
-	if (atomic_read(&dmc->fast_remove_in_prog) || sysctl_flashcache_stop_sync)
+	if ((atomic_read(&dmc->remove_in_prog) == FAST_REMOVE) || sysctl_flashcache_stop_sync)
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (writes_list == NULL) {

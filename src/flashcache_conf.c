@@ -599,7 +599,7 @@ flashcache_kcached_init(struct cache_c *dmc)
 #endif
 	init_waitqueue_head(&dmc->destroyq);
 	atomic_set(&dmc->nr_jobs, 0);
-	atomic_set(&dmc->fast_remove_in_prog, 0);
+	atomic_set(&dmc->remove_in_prog, 0);
 	return 0;
 }
 
@@ -1837,8 +1837,7 @@ static void
 flashcache_sync_for_remove(struct cache_c *dmc)
 {
 	do {
-		cancel_delayed_work(&dmc->delayed_clean);
-		flush_scheduled_work();
+		atomic_set(&dmc->remove_in_prog, SLOW_REMOVE); /* Stop cleaning of sets */
 		if (!sysctl_flashcache_fast_remove) {
 			/* 
 			 * Kick off cache cleaning. client_destroy will wait for cleanings
@@ -1851,7 +1850,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 			flashcache_sync_all(dmc);
 		} else {
 			/* Needed to abort any in-progress cleanings, leave blocks DIRTY */
-			atomic_set(&dmc->fast_remove_in_prog, 1);
+			atomic_set(&dmc->remove_in_prog, 1);
 			printk(KERN_ALERT "Fast flashcache remove Skipping cleaning of %d blocks", 
 			       dmc->nr_dirty);
 		}
@@ -1864,6 +1863,8 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 		msleep(FLASHCACHE_SYNC_REMOVE_DELAY);
 		/* Wait for all the dirty blocks to get written out, and any other IOs */
 		wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
+		cancel_delayed_work(&dmc->delayed_clean);
+		flush_scheduled_work();
 	} while (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0);
 }
 
