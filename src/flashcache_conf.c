@@ -1723,7 +1723,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu), pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-	       "\tcleanings(%lu) fallow cleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tcleanings(%lu) fallow cleanings(%lu)\n"	   \
+	       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
@@ -1735,7 +1736,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->fallow_cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->cleanings, dmc->fallow_cleanings, 
+	       dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
@@ -1748,7 +1750,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tpending enqueues(%lu) pending inval(%lu)\n"		\
 	       "\tmetadata dirties(%lu) metadata cleans(%lu)\n" \
 	       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-	       "\tcleanings(%lu) fallow cleanings(%lu) no room(%lu) front merge(%lu) back merge(%lu)\n" \
+	       "\tcleanings(%lu) fallow cleanings(%lu)\n" \
+	       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
 	       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
@@ -1759,7 +1762,8 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       dmc->enqueues, dmc->pending_inval, 
 	       dmc->md_write_dirty, dmc->md_write_clean, 
 	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->fallow_cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge,
+	       dmc->cleanings, dmc->fallow_cleanings, 
+	       dmc->noroom, dmc->front_merge, dmc->back_merge,
 	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
 	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
 	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
