@@ -132,6 +132,52 @@ struct cache_set {
 	unsigned long 		fallow_tstamp;
 };
 
+struct flashcache_errors {
+	int	disk_read_errors;
+	int	disk_write_errors;
+	int	ssd_read_errors;
+	int	ssd_write_errors;
+	int	memory_alloc_errors;
+};
+
+struct flashcache_stats {
+	unsigned long reads;		/* Number of reads */
+	unsigned long writes;		/* Number of writes */
+	unsigned long read_hits;	/* Number of cache hits */
+	unsigned long write_hits;	/* Number of write hits (includes dirty write hits) */
+	unsigned long dirty_write_hits;	/* Number of "dirty" write hits */
+	unsigned long replace;		/* Number of cache replacements */
+	unsigned long wr_replace;
+	unsigned long wr_invalidates;	/* Number of write invalidations */
+	unsigned long rd_invalidates;	/* Number of read invalidations */
+	unsigned long pending_inval;	/* Invalidations due to concurrent ios on same block */
+#ifdef FLASHCACHE_DO_CHECKSUMS
+	unsigned long checksum_store;
+	unsigned long checksum_valid;
+	unsigned long checksum_invalid;
+#endif
+	unsigned long enqueues;		/* enqueues on pending queue */
+	unsigned long cleanings;
+	unsigned long fallow_cleanings;
+	unsigned long noroom;		/* No room in set */
+	unsigned long md_write_dirty;	/* Metadata sector writes dirtying block */
+	unsigned long md_write_clean;	/* Metadata sector writes cleaning block */
+	unsigned long md_write_batch;	/* How many md updates did we batch ? */
+	unsigned long md_ssd_writes;	/* How many md ssd writes did we do ? */
+	unsigned long pid_drops;
+	unsigned long pid_adds;
+	unsigned long pid_dels;
+	unsigned long expiry;
+	unsigned long front_merge, back_merge;	/* Write Merging */
+	unsigned long uncached_reads, uncached_writes;
+	unsigned long disk_reads, disk_writes;
+	unsigned long ssd_reads, ssd_writes;
+	unsigned long uncached_io_requeue;
+	unsigned long skipclean;
+	unsigned long trim_blocks;
+	unsigned long clean_set_ios;
+};
+
 /*
  * Cache context
  */
@@ -182,53 +228,15 @@ struct cache_c {
 	int	clean_inprog;
 	int	sync_index;
 	int	nr_dirty;
-
+	unsigned long cached_blocks;	/* Number of cached blocks */
+	unsigned long pending_jobs_count;
 	int	md_blocks;		/* Numbers of metadata blocks, including header */
 
 	/* Stats */
-	unsigned long reads;		/* Number of reads */
-	unsigned long writes;		/* Number of writes */
-	unsigned long read_hits;	/* Number of cache hits */
-	unsigned long write_hits;	/* Number of write hits (includes dirty write hits) */
-	unsigned long dirty_write_hits;	/* Number of "dirty" write hits */
-	unsigned long replace;		/* Number of cache replacements */
-	unsigned long wr_replace;
-	unsigned long wr_invalidates;	/* Number of write invalidations */
-	unsigned long rd_invalidates;	/* Number of read invalidations */
-	unsigned long pending_inval;	/* Invalidations due to concurrent ios on same block */
-	unsigned long cached_blocks;	/* Number of cached blocks */
-#ifdef FLASHCACHE_DO_CHECKSUMS
-	unsigned long checksum_store;
-	unsigned long checksum_valid;
-	unsigned long checksum_invalid;
-#endif
-	unsigned long enqueues;		/* enqueues on pending queue */
-	unsigned long cleanings;
-	unsigned long fallow_cleanings;
-	unsigned long noroom;		/* No room in set */
-	unsigned long md_write_dirty;	/* Metadata sector writes dirtying block */
-	unsigned long md_write_clean;	/* Metadata sector writes cleaning block */
-	unsigned long md_write_batch;	/* How many md updates did we batch ? */
-	unsigned long md_ssd_writes;	/* How many md ssd writes did we do ? */
-	unsigned long pid_drops;
-	unsigned long pid_adds;
-	unsigned long pid_dels;
-	unsigned long expiry;
-	unsigned long front_merge, back_merge;	/* Write Merging */
-	unsigned long uncached_reads, uncached_writes;
-	unsigned long disk_reads, disk_writes;
-	unsigned long ssd_reads, ssd_writes;
-	unsigned long uncached_io_requeue;
-
-	unsigned long clean_set_ios;
-	unsigned long pending_jobs_count;
+	struct flashcache_stats flashcache_stats;
 
 	/* Errors */
-	int	disk_read_errors;
-	int	disk_write_errors;
-	int	ssd_read_errors;
-	int	ssd_write_errors;
-	int	memory_alloc_errors;
+	struct flashcache_errors flashcache_errors;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 	struct work_struct delayed_clean;

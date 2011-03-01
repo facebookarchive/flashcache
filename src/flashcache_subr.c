@@ -126,7 +126,7 @@ flashcache_alloc_pending_job(struct cache_c *dmc)
 	if (likely(job))
 		atomic_inc(&nr_pending_jobs);
 	else
-		dmc->memory_alloc_errors++;
+		dmc->flashcache_errors.memory_alloc_errors++;
 	return job;
 }
 
@@ -158,7 +158,7 @@ flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 		(*head)->prev = job;
 	*head = job;
 	dmc->cache[index].nr_queued++;
-	dmc->enqueues++;
+	dmc->flashcache_stats.enqueues++;
 	dmc->pending_jobs_count++;
 }
 
@@ -285,10 +285,10 @@ flashcache_validate_checksum(struct kcached_job *job)
 	sum = flashcache_compute_checksum(job->bio);
 	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
 	if (likely(job->dmc->cache[job->index].checksum == sum)) {
-		job->dmc->checksum_valid++;		
+		job->dmc->flashcache_stats.checksum_valid++;		
 		retval = 0;
 	} else {
-		job->dmc->checksum_invalid++;
+		job->dmc->flashcache_stats.checksum_invalid++;
 		retval = 1;
 	}
 	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
@@ -386,7 +386,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 
 	job = flashcache_alloc_cache_job();
 	if (unlikely(job == NULL)) {
-		dmc->memory_alloc_errors++;
+		dmc->flashcache_errors.memory_alloc_errors++;
 		return NULL;
 	}
 	job->dmc = dmc;
@@ -493,7 +493,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 		return;
 	set_dirty_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_ATOMIC);
 	if (set_dirty_list == NULL) {
-		dmc->memory_alloc_errors++;
+		dmc->flashcache_errors.memory_alloc_errors++;
 		goto out;
 	}
 	nr_set_dirty = 0;
@@ -552,9 +552,9 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 				VERIFY(*nr_writes <= dmc->assoc);
 				new_inserts++;
 				if (back_merge == -1)
-					dmc->front_merge++;
+					dmc->flashcache_stats.front_merge++;
 				else
-					dmc->back_merge++;
+					dmc->flashcache_stats.back_merge++;
 				VERIFY(*nr_writes <= dmc->assoc);
 				break;
 			}
@@ -581,7 +581,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 				(*nr_writes)++;
 				VERIFY(*nr_writes <= dmc->assoc);
 				new_inserts++;
-				dmc->back_merge++;
+				dmc->flashcache_stats.back_merge++;
 				VERIFY(*nr_writes <= dmc->assoc);				
 			}
 		}
@@ -717,7 +717,7 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 {
 	u_int64_t dirty_pct;
 	
-	if (dmc->cleanings % 1000)
+	if (dmc->flashcache_stats.cleanings % 1000)
 		return;
 	if (!dmc->nr_dirty || !dmc->size || !printk_ratelimit())
 		return;

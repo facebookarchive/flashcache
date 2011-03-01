@@ -202,7 +202,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			schedule_work(&_kcached_wq);
 			return;
 		} else {
-			dmc->disk_read_errors++;			
+			dmc->flashcache_errors.disk_read_errors++;			
 			flashcache_bio_endio(bio, error);
 		}
 		break;
@@ -217,7 +217,7 @@ flashcache_io_callback(unsigned long error, void *context)
 		VERIFY(cacheblk->cache_state & CACHEREADINPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (unlikely(error))
-			dmc->ssd_read_errors++;
+			dmc->flashcache_errors.ssd_read_errors++;
 #ifdef FLASHCACHE_DO_CHECKSUMS
 		if (likely(error == 0)) {
 			if (flashcache_validate_checksum(job)) {
@@ -238,7 +238,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			sysctl_flashcache_error_inject &= ~READFILL_ERROR;
 		}
 		if (unlikely(error))
-			dmc->ssd_write_errors++;
+			dmc->flashcache_errors.ssd_write_errors++;
 		VERIFY(cacheblk->cache_state & DISKREADINPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		flashcache_bio_endio(bio, error);
@@ -254,7 +254,7 @@ flashcache_io_callback(unsigned long error, void *context)
 		VERIFY(cacheblk->cache_state & CACHEWRITEINPROG);
 		if (likely(error == 0)) {
 #ifdef FLASHCACHE_DO_CHECKSUMS
-			dmc->checksum_store++;
+			dmc->flashcache_stats.checksum_store++;
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 			flashcache_store_checksum(job);
 			/* 
@@ -272,7 +272,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			}
 #endif
 		} else {
-			dmc->ssd_write_errors++;			
+			dmc->flashcache_errors.ssd_write_errors++;			
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		}
 		flashcache_bio_endio(bio, error);
@@ -336,7 +336,7 @@ flashcache_do_pending_error(struct kcached_job *job)
 	/* Invalidate block if possible */
 	if ((cacheblk->cache_state & DIRTY) == 0) {
 		dmc->cached_blocks--;
-		dmc->pending_inval++;
+		dmc->flashcache_stats.pending_inval++;
 		cacheblk->cache_state &= ~VALID;
 		cacheblk->cache_state |= INVALID;
 	}
@@ -371,7 +371,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 		index, cacheblk->cache_state);
 	VERIFY(cacheblk->cache_state & VALID);
 	dmc->cached_blocks--;
-	dmc->pending_inval++;
+	dmc->flashcache_stats.pending_inval++;
 	cacheblk->cache_state &= ~VALID;
 	cacheblk->cache_state |= INVALID;
 	freelist = flashcache_deq_pending(dmc, cacheblk - &dmc->cache[0]);
@@ -434,9 +434,9 @@ flashcache_do_io(struct kcached_job *job)
 	/* Write to cache device */
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	flashcache_store_checksum(job);
-	job->dmc->checksum_store++;
+	job->dmc->flashcache_stats.checksum_store++;
 #endif
-	job->dmc->ssd_writes++;
+	job->dmc->flashcache_stats.ssd_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_io_callback, job);
 	VERIFY(r == 0);
@@ -601,7 +601,7 @@ flashcache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 	if (*index < (start_index + dmc->assoc))
 		return INVALID;
 	else {
-		dmc->noroom++;
+		dmc->flashcache_stats.noroom++;
 		return -1;
 	}
 }
@@ -638,7 +638,7 @@ flashcache_alloc_md_sector(struct kcached_job *job)
 		sysctl_flashcache_error_inject &= ~MD_ALLOC_SECTOR_ERROR;
 	job->md_io_bvec.bv_page = page;
 	if (unlikely(page == NULL)) {
-		job->dmc->memory_alloc_errors++;
+		job->dmc->flashcache_errors.memory_alloc_errors++;
 		return -ENOMEM;
 	}
 	job->md_io_bvec.bv_len = MD_BLOCK_BYTES(job->dmc);
@@ -709,7 +709,7 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	for (job = md_block_head->md_io_inprog ; 
 	     job != NULL ;
 	     job = job->next) {
-		dmc->md_write_batch++;
+		dmc->flashcache_stats.md_write_batch++;
 		if (job->action == WRITECACHE) {
 			/* DIRTY the cache block */
 			md_block[INDEX_TO_MD_BLOCK_OFFSET(dmc, job->index)].cache_state = 
@@ -723,8 +723,8 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	where.bdev = dmc->cache_dev->bdev;
 	where.count = MD_SECTORS_PER_BLOCK(dmc);
 	where.sector = (1 + INDEX_TO_MD_BLOCK(dmc, orig_job->index)) * MD_SECTORS_PER_BLOCK(dmc);
-	dmc->ssd_writes++;
-	dmc->md_ssd_writes++;
+	dmc->flashcache_stats.ssd_writes++;
+	dmc->flashcache_stats.md_ssd_writes++;
 	dm_io_async_bvec(1, &where, WRITE,
 			 &orig_job->md_io_bvec,
 			 flashcache_md_write_callback, orig_job);
@@ -767,10 +767,10 @@ flashcache_md_write_done(struct kcached_job *job)
 					dmc->cache_sets[index / dmc->assoc].nr_dirty++;
 					dmc->nr_dirty++;
 				}
-				dmc->md_write_dirty++;
+				dmc->flashcache_stats.md_write_dirty++;
 				cacheblk->cache_state |= DIRTY;
 			} else
-				dmc->ssd_write_errors++;
+				dmc->flashcache_errors.ssd_write_errors++;
 			flashcache_bio_endio(job->bio, job->error);
 			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
@@ -799,14 +799,14 @@ flashcache_md_write_done(struct kcached_job *job)
 			 * the block was being cleaned.
 			 */
 			if (likely(job->error == 0)) {
-				dmc->md_write_clean++;
+				dmc->flashcache_stats.md_write_clean++;
 				cacheblk->cache_state &= ~DIRTY;
 				VERIFY(dmc->cache_sets[index / dmc->assoc].nr_dirty > 0);
 				VERIFY(dmc->nr_dirty > 0);
 				dmc->cache_sets[index / dmc->assoc].nr_dirty--;
 				dmc->nr_dirty--;
 			} else 
-				dmc->ssd_write_errors++;
+				dmc->flashcache_errors.ssd_write_errors++;
 			VERIFY(dmc->cache_sets[index / dmc->assoc].clean_inprog > 0);
 			VERIFY(dmc->clean_inprog > 0);
 			dmc->cache_sets[index / dmc->assoc].clean_inprog--;
@@ -835,7 +835,7 @@ flashcache_md_write_done(struct kcached_job *job)
 				else
 					flashcache_sync_blocks(dmc);
 			}
-			dmc->cleanings++;
+			dmc->flashcache_stats.cleanings++;
 			if (action == WRITEDISK_SYNC)
 				flashcache_update_sync_progress(dmc);
 		}
@@ -941,15 +941,15 @@ flashcache_kcopyd_callback(int read_err, unsigned int write_err, void *context)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		/* Set the error in the job and let do_pending() handle the error */
 		if (read_err) {
-			dmc->ssd_read_errors++;
+			dmc->flashcache_errors.ssd_read_errors++;
 			job->error = read_err;
 		} else {
-			dmc->disk_write_errors++;
+			dmc->flashcache_errors.disk_write_errors++;
 			job->error = write_err;
 		}
 		flashcache_do_pending(job);
 		flashcache_clean_set(dmc, index / dmc->assoc); /* Kick off more cleanings */
-		dmc->cleanings++;
+		dmc->flashcache_stats.cleanings++;
 	}
 }
 
@@ -1000,8 +1000,8 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK;
 		atomic_inc(&dmc->nr_jobs);
-		dmc->ssd_reads++;
-		dmc->disk_writes++;
+		dmc->flashcache_stats.ssd_reads++;
+		dmc->flashcache_stats.disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
@@ -1080,7 +1080,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		sysctl_flashcache_error_inject &= ~WRITES_LIST_ALLOC_FAIL;
 	}
 	if (writes_list == NULL) {
-		dmc->memory_alloc_errors++;
+		dmc->flashcache_errors.memory_alloc_errors++;
 		return;
 	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
@@ -1113,7 +1113,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		flashcache_clear_fallow(dmc, i);
 		writes_list[nr_writes].dbn = cacheblk->dbn;
 		writes_list[nr_writes].index = i;
-		dmc->fallow_cleanings++;
+		dmc->flashcache_stats.fallow_cleanings++;
 		nr_writes++;
 	}
 	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
@@ -1168,7 +1168,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 out:
 	if (nr_writes > 0) {
 		flashcache_merge_writes(dmc, writes_list, &nr_writes, set);
-		dmc->clean_set_ios += nr_writes;
+		dmc->flashcache_stats.clean_set_ios += nr_writes;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		for (i = 0 ; i < nr_writes ; i++)
 			flashcache_dirty_writeback(dmc, writes_list[i].index);
@@ -1193,7 +1193,7 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 		struct kcached_job *job;
 			
 		cacheblk->cache_state |= CACHEREADINPROG;
-		dmc->read_hits++;
+		dmc->flashcache_stats.read_hits++;
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		DPRINTK("Cache read: Block %llu(%lu), index = %d:%s",
 			bio->bi_sector, bio->bi_size, index, "CACHE HIT");
@@ -1220,7 +1220,7 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 		} else {
 			job->action = READCACHE; /* Fetch data from cache */
 			atomic_inc(&dmc->nr_jobs);
-			dmc->ssd_reads++;
+			dmc->flashcache_stats.ssd_reads++;
 			dm_io_async_bvec(1, &job->cache, READ,
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
@@ -1275,7 +1275,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 	} else {
 		job->action = READDISK; /* Fetch data from the source device */
 		atomic_inc(&dmc->nr_jobs);
-		dmc->disk_reads++;
+		dmc->flashcache_stats.disk_reads++;
 		dm_io_async_bvec(1, &job->disk, READ,
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_io_callback, job);
@@ -1338,7 +1338,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	 * Claim the cache blocks before giving up the spinlock
 	 */
 	if (dmc->cache[index].cache_state & VALID)
-		dmc->replace++;
+		dmc->flashcache_stats.replace++;
 	else
 		dmc->cached_blocks++;
 	dmc->cache[index].cache_state = VALID | DISKREADINPROG;
@@ -1377,9 +1377,9 @@ flashcache_inval_block_set(struct cache_c *dmc, int set, struct bio *bio, int rw
 		    (io_end >= start_dbn && io_end < end_dbn)) {
 			/* We have a match */
 			if (rw == WRITE)
-				dmc->wr_invalidates++;
+				dmc->flashcache_stats.wr_invalidates++;
 			else
-				dmc->rd_invalidates++;
+				dmc->flashcache_stats.rd_invalidates++;
 			if (!(cacheblk->cache_state & (BLOCK_IO_INPROG | DIRTY)) &&
 			    (cacheblk->nr_queued == 0)) {
 				dmc->cached_blocks--;			
@@ -1490,7 +1490,7 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 		return;
 	}
 	if (cacheblk->cache_state & VALID)
-		dmc->wr_replace++;
+		dmc->flashcache_stats.wr_replace++;
 	else
 		dmc->cached_blocks++;
 	cacheblk->cache_state = VALID | CACHEWRITEINPROG;
@@ -1522,7 +1522,7 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 	} else {
 		job->action = WRITECACHE; 
 		atomic_inc(&dmc->nr_jobs);
-		dmc->ssd_writes++;
+		dmc->flashcache_stats.ssd_writes++;
 		dm_io_async_bvec(1, &job->cache, WRITE, 
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_io_callback, job);
@@ -1540,8 +1540,8 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 	cacheblk = &dmc->cache[index];
 	if (!(cacheblk->cache_state & BLOCK_IO_INPROG) && (cacheblk->nr_queued == 0)) {
 		if (cacheblk->cache_state & DIRTY)
-			dmc->dirty_write_hits++;
-		dmc->write_hits++;
+			dmc->flashcache_stats.dirty_write_hits++;
+		dmc->flashcache_stats.write_hits++;
 		cacheblk->cache_state |= CACHEWRITEINPROG;
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		job = new_kcached_job(dmc, bio, index);
@@ -1568,7 +1568,7 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			job->action = WRITECACHE; /* Write data to the source device */
 			DPRINTK("Queue job for %llu", bio->bi_sector);
 			atomic_inc(&dmc->nr_jobs);
-			dmc->ssd_writes++;
+			dmc->flashcache_stats.ssd_writes++;
 			dm_io_async_bvec(1, &job->cache, WRITE, 
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
@@ -1666,9 +1666,9 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
 
 	if (bio_data_dir(bio) == READ)
-		dmc->reads++;
+		dmc->flashcache_stats.reads++;
 	else
-		dmc->writes++;
+		dmc->flashcache_stats.writes++;
 
 	spin_lock_irq(&dmc->cache_spin_lock);
 	if (unlikely(sysctl_pid_do_expiry && 
@@ -1727,15 +1727,15 @@ flashcache_kcopyd_callback_sync(int read_err, unsigned int write_err, void *cont
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		/* Set the error in the job and let do_pending() handle the error */
 		if (read_err) {
-			dmc->ssd_read_errors++;
+			dmc->flashcache_errors.ssd_read_errors++;
 			job->error = read_err;
 		} else {
-			dmc->disk_write_errors++;			
+			dmc->flashcache_errors.disk_write_errors++;			
 			job->error = write_err;
 		}
 		flashcache_do_pending(job);
 		flashcache_sync_blocks(dmc);  /* Kick off more cleanings */
-		dmc->cleanings++;
+		dmc->flashcache_stats.cleanings++;
 	}
 }
 
@@ -1781,8 +1781,8 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		job->bio = NULL;
 		job->action = WRITEDISK_SYNC;
 		atomic_inc(&dmc->nr_jobs);
-		dmc->ssd_reads++;
-		dmc->disk_writes++;
+		dmc->flashcache_stats.ssd_reads++;
+		dmc->flashcache_stats.disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 		kcopyd_copy(dmc->kcp_client, &job->cache, 1, &job->disk, 0, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
@@ -1823,7 +1823,7 @@ flashcache_sync_blocks(struct cache_c *dmc)
 		return;
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (writes_list == NULL) {
-		dmc->memory_alloc_errors++;
+		dmc->flashcache_errors.memory_alloc_errors++;
 		return;
 	}
 	nr_writes = 0;
@@ -1919,9 +1919,9 @@ flashcache_uncached_io_complete(struct kcached_job *job)
 		      error, job->disk.sector, 
 		      (bio_data_dir(job->bio) == WRITE) ? "WRITE" : "READ");
 		if (bio_data_dir(job->bio) == WRITE)
-			dmc->disk_write_errors++;
+			dmc->flashcache_errors.disk_write_errors++;
 		else
-			dmc->disk_read_errors++;
+			dmc->flashcache_errors.disk_read_errors++;
 	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	queued = flashcache_inval_blocks(dmc, job->bio);
@@ -1935,7 +1935,7 @@ flashcache_uncached_io_complete(struct kcached_job *job)
 		 * disk IO post-invalidation calling start_uncached_io.
 		 * This should be a rare occurrence.
 		 */
-		dmc->uncached_io_requeue++;
+		dmc->flashcache_stats.uncached_io_requeue++;
 	} else {
 		flashcache_bio_endio(job->bio, error);
 	}
@@ -1965,11 +1965,11 @@ flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio)
 	struct kcached_job *job;
 	
 	if (is_write) {
-		dmc->uncached_writes++;
-		dmc->disk_writes++;
+		dmc->flashcache_stats.uncached_writes++;
+		dmc->flashcache_stats.disk_writes++;
 	} else {
-		dmc->uncached_reads++;
-		dmc->disk_reads++;
+		dmc->flashcache_stats.uncached_reads++;
+		dmc->flashcache_stats.disk_reads++;
 	}
 	job = new_kcached_job(dmc, bio, -1);
 	if (unlikely(job == NULL)) {

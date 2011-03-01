@@ -1565,36 +1565,7 @@ bad:
 static void
 flashcache_zero_stats(struct cache_c *dmc)
 {
-	dmc->reads = 0;
-	dmc->writes = 0;
-	dmc->read_hits = 0;
-	dmc->write_hits = 0;
-	dmc->dirty_write_hits = 0;
-	dmc->replace = 0;
-	dmc->wr_replace = 0;
-	dmc->wr_invalidates = 0;
-	dmc->rd_invalidates = 0;
-	dmc->pending_inval = 0;
-	dmc->enqueues = 0;
-	dmc->fallow_cleanings = 0;
-	dmc->cleanings = 0;
-	dmc->noroom = 0;
-	dmc->md_write_dirty = 0;
-	dmc->md_write_clean = 0;
-	dmc->md_write_batch = 0;
-	dmc->md_ssd_writes = 0;
-#ifdef FLASHCACHE_DO_CHECKSUMS
-	dmc->checksum_store = 0;
-	dmc->checksum_valid = 0;
-	dmc->checksum_invalid = 0;
-#endif
-	dmc->clean_set_ios = 0;
-	dmc->front_merge = dmc->back_merge = 0;
-	dmc->pid_drops = dmc->pid_adds = dmc->pid_dels = dmc->expiry = 0;
-	dmc->uncached_reads = dmc->uncached_writes = 0;
-	dmc->uncached_io_requeue = 0;
-	dmc->disk_reads = dmc->disk_writes = 0;
-	dmc->ssd_reads = dmc->ssd_writes = 0;
+	memset(&dmc->flashcache_stats, 0, sizeof(struct flashcache_stats));
 }
 
 /*
@@ -1607,7 +1578,8 @@ flashcache_dtr(struct dm_target *ti)
 	struct cache_c **nodepp;
 	int i;
 	int nr_queued = 0;
-
+	struct flashcache_stats *stats = &dmc->flashcache_stats;
+	
 	flashcache_sync_for_remove(dmc);
 	flashcache_md_store(dmc);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
@@ -1626,7 +1598,7 @@ flashcache_dtr(struct dm_target *ti)
 #else
 	dm_kcopyd_client_destroy(dmc->kcp_client);
 #endif
-	if ((dmc->reads > 0) && (dmc->writes > 0)) {
+	if ((stats->reads > 0) && (stats->writes > 0)) {
 #ifdef FLASHCACHE_DO_CHECKSUMS
 		DMINFO("stats: reads(%lu), writes(%lu), read hits(%lu), write hits(%lu), " \
 		       "read hit percent(%ld), replacement(%lu), write invalidates(%lu), " \
@@ -1634,25 +1606,32 @@ flashcache_dtr(struct dm_target *ti)
 		       "pending inval(%lu) cleanings(%lu), fallow cleanings(%lu) " \
 		       "checksum invalid(%ld), checksum store(%ld), checksum valid(%ld)" \
 		       "front merge(%ld) back merge(%ld)",
-		       dmc->reads, dmc->writes, dmc->read_hits, dmc->write_hits,
-		       dmc->read_hits*100/dmc->reads,
-		       dmc->replace, dmc->wr_invalidates, dmc->rd_invalidates,
-		       dmc->wr_replace, dmc->enqueues, 
-		       dmc->pending_inval, dmc->cleanings, dmc->fallow_cleanings,
-		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid,
-		       dmc->front_merge, dmc->back_merge);
+		       stats->reads, stats->writes, 
+		       stats->read_hits, stats->write_hits,
+		       stats->read_hits*100/stats->reads,
+		       stats->replace, stats->wr_invalidates, 
+		       stats->rd_invalidates,
+		       stats->wr_replace, stats->enqueues, 
+		       stats->pending_inval, stats->cleanings, 
+		       stats->fallow_cleanings,
+		       stats->checksum_store, stats->checksum_valid, 
+		       stats->checksum_invalid,
+		       stats->front_merge, stats->back_merge);
 #else
 		DMINFO("stats: reads(%lu), writes(%lu), read hits(%lu), write hits(%lu), " \
 		       "read hit percent(%ld), replacement(%lu), write invalidates(%lu), " \
 		       "read invalidates(%lu), write replacement(%lu), pending enqueues(%lu), " \
 		       "pending inval(%lu) cleanings(%lu) fallow cleanings(%lu)" \
 		       "front merge(%ld) back merge(%ld)",
-		       dmc->reads, dmc->writes, dmc->read_hits, dmc->write_hits,
-		       dmc->read_hits*100/dmc->reads,
-		       dmc->replace, dmc->wr_invalidates, dmc->rd_invalidates,
-		       dmc->wr_replace, dmc->enqueues, 
-		       dmc->pending_inval, dmc->cleanings, dmc->fallow_cleanings,
-		       dmc->front_merge, dmc->back_merge);
+		       stats->reads, stats->writes, 
+		       stats->read_hits, stats->write_hits,
+		       stats->read_hits*100/stats->reads,
+		       stats->replace, stats->wr_invalidates, 
+		       stats->rd_invalidates,
+		       stats->wr_replace, stats->enqueues, 
+		       stats->pending_inval, stats->cleanings, 
+		       stats->fallow_cleanings,
+		       stats->front_merge, stats->back_merge);
 #endif
 
 	}
@@ -1700,19 +1679,21 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 {
 	int read_hit_pct, write_hit_pct, dirty_write_hit_pct;
 	int sz = 0; /* DMEMIT */
+	struct flashcache_stats *stats = &dmc->flashcache_stats;
 	
-	if (dmc->reads > 0)
-		read_hit_pct = dmc->read_hits * 100 / dmc->reads;
+	if (stats->reads > 0)
+		read_hit_pct = stats->read_hits * 100 / stats->reads;
 	else
 		read_hit_pct = 0;
-	if (dmc->writes > 0) {
-		write_hit_pct = dmc->write_hits * 100 / dmc->writes;
-		dirty_write_hit_pct = dmc->dirty_write_hits * 100 / dmc->writes;		
+	if (stats->writes > 0) {
+		write_hit_pct = stats->write_hits * 100 / stats->writes;
+		dirty_write_hit_pct = stats->dirty_write_hits * 100 / stats->writes;
 	} else {
 		write_hit_pct = 0;
 		dirty_write_hit_pct = 0;
 	}
-	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
+	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", 
+	       stats->reads, stats->writes);
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
 	       "\twrite hits(%lu) write hit percent(%d)\n" 		\
@@ -1728,19 +1709,20 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
-	       dmc->read_hits, read_hit_pct, 
-	       dmc->write_hits, write_hit_pct,
-	       dmc->dirty_write_hits, dirty_write_hit_pct,
-	       dmc->replace, dmc->wr_replace, dmc->wr_invalidates, dmc->rd_invalidates,
-	       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid,
-	       dmc->enqueues, dmc->pending_inval, 
-	       dmc->md_write_dirty, dmc->md_write_clean, 
-	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->fallow_cleanings, 
-	       dmc->noroom, dmc->front_merge, dmc->back_merge,
-	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
-	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
-	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
+	       stats->read_hits, read_hit_pct,
+	       stats->write_hits, write_hit_pct,
+	       stats->dirty_write_hits, dirty_write_hit_pct,
+	       stats->replace, stats->wr_replace, 
+	       stats->wr_invalidates, stats->rd_invalidates,
+	       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
+	       stats->enqueues, stats->pending_inval,
+	       stats->md_write_dirty, stats->md_write_clean,
+	       stats->md_write_batch, stats->md_ssd_writes,
+	       stats->cleanings, stats->fallow_cleanings, 
+	       stats->noroom, stats->front_merge, stats->back_merge,
+	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
+	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 #else
 	DMEMIT("\tread hits(%lu), read hit percent(%d)\n"		\
 	       "\twrite hits(%lu) write hit percent(%d)\n" 		\
@@ -1755,18 +1737,19 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-	       dmc->read_hits, read_hit_pct, 
-	       dmc->write_hits, write_hit_pct,
-	       dmc->dirty_write_hits, dirty_write_hit_pct,
-	       dmc->replace, dmc->wr_replace, dmc->wr_invalidates, dmc->rd_invalidates,
-	       dmc->enqueues, dmc->pending_inval, 
-	       dmc->md_write_dirty, dmc->md_write_clean, 
-	       dmc->md_write_batch, dmc->md_ssd_writes,
-	       dmc->cleanings, dmc->fallow_cleanings, 
-	       dmc->noroom, dmc->front_merge, dmc->back_merge,
-	       dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes,
-	       dmc->uncached_reads, dmc->uncached_writes, dmc->uncached_io_requeue,
-	       dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
+	       stats->read_hits, read_hit_pct,
+	       stats->write_hits, write_hit_pct,
+	       stats->dirty_write_hits, dirty_write_hit_pct,
+	       stats->replace, stats->wr_replace, 
+	       stats->wr_invalidates, stats->rd_invalidates,
+	       stats->enqueues, stats->pending_inval,
+	       stats->md_write_dirty, stats->md_write_clean,
+	       stats->md_write_batch, stats->md_ssd_writes,
+	       stats->cleanings, stats->fallow_cleanings, 
+	       stats->noroom, stats->front_merge, stats->back_merge,
+	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
+	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 #endif
 }
 
@@ -1913,6 +1896,7 @@ static int
 flashcache_stats_show(struct seq_file *seq, void *v)
 {
 	struct cache_c *dmc;
+	struct flashcache_stats *stats;
 
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
@@ -1923,38 +1907,41 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 	     dmc = dmc->next_cache) {
 		int read_hit_pct, write_hit_pct, dirty_write_hit_pct;
 
-		if (dmc->reads > 0)
-			read_hit_pct = dmc->read_hits * 100 / dmc->reads;
+		stats = &dmc->flashcache_stats;
+		if (stats->reads > 0)
+			read_hit_pct = stats->read_hits * 100 / stats->reads;
 		else
 			read_hit_pct = 0;
-		if (dmc->writes > 0) {
-			write_hit_pct = dmc->write_hits * 100 / dmc->writes;
-			dirty_write_hit_pct = dmc->dirty_write_hits * 100 / dmc->writes;		
+		if (stats->writes > 0) {
+			write_hit_pct = stats->write_hits * 100 / stats->writes;
+			dirty_write_hit_pct = stats->dirty_write_hits * 100 / stats->writes;
 		} else {
 			write_hit_pct = 0;
 			dirty_write_hit_pct = 0;
 		}
-		seq_printf(seq, "reads=%lu writes=%lu ", dmc->reads, dmc->writes);
+		seq_printf(seq, "reads=%lu writes=%lu ", stats->reads, 
+			   stats->writes);
 		seq_printf(seq, "read_hits=%lu read_hit_percent=%d write_hits=%lu write_hit_percent=%d ",
-			   dmc->read_hits, read_hit_pct, dmc->write_hits, write_hit_pct);
+			   stats->read_hits, read_hit_pct, 
+			   stats->write_hits, write_hit_pct);
 		seq_printf(seq, "dirty_write_hits=%lu dirty_write_hit_percent=%d ",
-			   dmc->dirty_write_hits, dirty_write_hit_pct);
+			   stats->dirty_write_hits, dirty_write_hit_pct);
 		seq_printf(seq, "replacement=%lu write_replacement=%lu ", 
-			   dmc->replace, dmc->wr_replace);
+			   stats->replace, stats->wr_replace);
 		seq_printf(seq, "write_invalidates=%lu read_invalidates=%lu ", 
-			   dmc->wr_invalidates, dmc->rd_invalidates);
+			   stats->wr_invalidates, stats->rd_invalidates);
 		seq_printf(seq, "pending_enqueues=%lu pending_inval=%lu ", 
-			   dmc->enqueues, dmc->pending_inval);
+			   stats->enqueues, stats->pending_inval);
 		seq_printf(seq, "metadata_dirties=%lu metadata_cleans=%lu ", 
-			   dmc->md_write_dirty, dmc->md_write_clean);
+			   stats->md_write_dirty, stats->md_write_clean);
 		seq_printf(seq, "cleanings=%lu no_room=%lu front_merge=%lu back_merge=%lu ",
-			   dmc->cleanings, dmc->noroom, dmc->front_merge, dmc->back_merge);
+			   stats->cleanings, stats->noroom, stats->front_merge, stats->back_merge);
 		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu ",
-			   dmc->pid_adds, dmc->pid_dels, dmc->pid_drops, dmc->expiry);
+			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   dmc->disk_reads, dmc->disk_writes, dmc->ssd_reads, dmc->ssd_writes);
+			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
 		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu\n",
-			   dmc->uncached_reads, dmc->uncached_writes);
+			   stats->uncached_reads, stats->uncached_writes);
 
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
@@ -1989,15 +1976,14 @@ flashcache_errors_show(struct seq_file *seq, void *v)
 	     dmc != NULL ; 
 	     dmc = dmc->next_cache) {
 		seq_printf(seq, "disk_read_errors=%d disk_write_errors=%d ",
-			   dmc->disk_read_errors, dmc->disk_write_errors);
+			   dmc->flashcache_errors.disk_read_errors, 
+			   dmc->flashcache_errors.disk_write_errors);
 		seq_printf(seq, "ssd_read_errors=%d ssd_write_errors=%d ",
-			   dmc->ssd_read_errors, dmc->ssd_write_errors);
-		seq_printf(seq, "memory_alloc_errors=%d\n", dmc->memory_alloc_errors);
-		dmc->disk_read_errors = 0;
-		dmc->disk_write_errors = 0;
-		dmc->ssd_read_errors = 0;
-		dmc->ssd_write_errors = 0;
-		dmc->memory_alloc_errors = 0;
+			   dmc->flashcache_errors.ssd_read_errors, 
+			   dmc->flashcache_errors.ssd_write_errors);
+		seq_printf(seq, "memory_alloc_errors=%d\n", 
+			   dmc->flashcache_errors.memory_alloc_errors);
+		memset(&dmc->flashcache_errors, 0, sizeof(struct flashcache_errors));
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
 	smp_mb__after_clear_bit();

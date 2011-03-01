@@ -87,14 +87,14 @@ flashcache_drop_pids(struct cache_c *dmc, int which_list)
 			VERIFY(dmc->whitelist_head != NULL);
 			flashcache_del_pid_locked(dmc, dmc->whitelist_tail->pid,
 						  which_list);
-			dmc->pid_drops++;
+			dmc->flashcache_stats.pid_drops++;
 		}
 	} else {
 		while (dmc->num_blacklist_pids >= sysctl_flashcache_max_pids) {
 			VERIFY(dmc->blacklist_head != NULL);
 			flashcache_del_pid_locked(dmc, dmc->blacklist_tail->pid,
 						  which_list);
-			dmc->pid_drops++;
+			dmc->flashcache_stats.pid_drops++;
 		}		
 	}
 }
@@ -141,7 +141,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 			dmc->num_whitelist_pids++;
 		else
 			dmc->num_blacklist_pids++;
-		dmc->pid_adds++;
+		dmc->flashcache_stats.pid_adds++;
 		/* When adding the first entry to list, set expiry check timeout */
 		if (*head == new)
 			dmc->pid_expire_check = 
@@ -184,7 +184,7 @@ flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, int which_list)
 			} else
 				node->next->prev = node->prev;
 			kfree(node);
-			dmc->pid_dels++;
+			dmc->flashcache_stats.pid_dels++;
 			if (which_list == FLASHCACHE_WHITELIST)
 				dmc->num_whitelist_pids--;
 			else
@@ -286,7 +286,7 @@ flashcache_pid_expiry_list_locked(struct cache_c *dmc, int which_list)
 			dmc->num_whitelist_pids--;
 		else
 			dmc->num_blacklist_pids--;
-		dmc->expiry++;
+		dmc->flashcache_stats.expiry++;
 	}
 }
 
