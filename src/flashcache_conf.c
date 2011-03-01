@@ -79,6 +79,7 @@ int sysctl_pid_do_expiry = 0;
 int sysctl_flashcache_fast_remove = 0;
 int sysctl_cache_all = 1;
 int sysctl_fallow_delay = 60;
+int sysctl_flashcache_lat_hist = 0;
 
 struct cache_c *cache_list_head = NULL;
 struct work_struct _kcached_wq;
@@ -116,6 +117,44 @@ static int
 flashcache_wait_schedule(void *unused)
 {
 	schedule();
+	return 0;
+}
+
+static int
+flashcache_io_latency_init(ctl_table *table, int write,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+			   struct file *file,
+#endif
+			   void __user *buffer,
+			   size_t *length, loff_t *ppos)
+{
+	struct cache_c *dmc;
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+	proc_dointvec_minmax(table, write, file, buffer, length, ppos);
+#else
+	proc_dointvec_minmax(table, write, buffer, length, ppos);
+#endif
+	if (write) {
+		if (sysctl_flashcache_lat_hist) {
+			(void)wait_on_bit_lock(&flashcache_control->synch_flags,
+					       FLASHCACHE_UPDATE_LIST,
+					       flashcache_wait_schedule,
+					       TASK_UNINTERRUPTIBLE);
+			for (dmc = cache_list_head ;
+			     dmc != NULL ;
+			     dmc = dmc->next_cache) {
+				int i;
+				
+				for (i = 0 ; i < IO_LATENCY_BUCKETS ; i++)
+					dmc->latency_hist[i] = 0;
+				dmc->latency_hist_10ms = 0;
+			}
+			clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
+			smp_mb__after_clear_bit();
+			wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
+		}
+	}
 	return 0;
 }
 
@@ -290,6 +329,19 @@ flashcache_max_clean_ios_set_sysctl_handler(ctl_table *table, int write,
 #endif
 
 static ctl_table flashcache_table[] = {
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		.ctl_name	= CTL_UNNUMBERED,
+#endif
+		.procname	= "io_latency_hist",
+		.data		= &sysctl_flashcache_lat_hist,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &flashcache_io_latency_init,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		.strategy	= &sysctl_intvec,
+#endif
+	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 		.ctl_name	= CTL_UNNUMBERED,
@@ -1565,7 +1617,12 @@ bad:
 static void
 flashcache_zero_stats(struct cache_c *dmc)
 {
+	int i;
+
 	memset(&dmc->flashcache_stats, 0, sizeof(struct flashcache_stats));
+	for (i = 0 ; i < IO_LATENCY_BUCKETS ; i++)
+		dmc->latency_hist[i] = 0;
+	dmc->latency_hist_10ms = 0;
 }
 
 /*
@@ -1673,6 +1730,8 @@ flashcache_dtr(struct dm_target *ti)
 	kfree(dmc);
 }
 
+extern int sysctl_flashcache_lat_hist;
+
 void
 flashcache_status_info(struct cache_c *dmc, status_type_t type,
 		       char *result, unsigned int maxlen)
@@ -1751,6 +1810,15 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
 	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 #endif
+	if (sysctl_flashcache_lat_hist) {
+		int i;
+		
+		DMEMIT("\nIO Latency Histogram: \n");
+		for (i = 1 ; i <= IO_LATENCY_BUCKETS ; i++) {
+			DMEMIT("< %d\tusecs : %lu\n", i * IO_LATENCY_GRAN_USECS, dmc->latency_hist[i - 1]);
+		}
+		DMEMIT("> 10\tmsecs : %lu", dmc->latency_hist_10ms);		
+	}
 }
 
 static void

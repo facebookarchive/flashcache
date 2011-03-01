@@ -53,12 +53,6 @@
 #define DPRINTK( s, arg... )
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
-#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
-#else
-#define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))
-#endif
-
 /*
  * Block checksums :
  * Block checksums seem a good idea (especially for debugging, I found a couple 
@@ -238,6 +232,13 @@ struct cache_c {
 	/* Errors */
 	struct flashcache_errors flashcache_errors;
 
+#define IO_LATENCY_GRAN_USECS	250
+#define IO_LATENCY_MAX_US_TRACK	10000	/* 10 ms */
+#define IO_LATENCY_BUCKETS	(IO_LATENCY_MAX_US_TRACK / IO_LATENCY_GRAN_USECS)
+	unsigned long	latency_hist[IO_LATENCY_BUCKETS];
+	unsigned long	latency_hist_10ms;
+	
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 	struct work_struct delayed_clean;
 #else
@@ -285,6 +286,7 @@ struct kcached_job {
 	int 	error;
 	struct flash_cacheblock *md_block;
 	struct bio_vec md_io_bvec;
+	struct timeval io_start_time;
 	struct kcached_job *next;
 };
 
@@ -373,7 +375,6 @@ struct flash_cacheblock {
 	u_int32_t	cache_state; /* INVALID | VALID | DIRTY */
 } __attribute__ ((aligned(16)));
 #endif
-
 
 #define MD_BLOCK_BYTES(DMC)		((DMC)->md_block_size * 512)
 #define MD_SECTORS_PER_BLOCK(DMC)	((DMC)->md_block_size)
@@ -528,6 +529,9 @@ int dm_io_async_bvec(unsigned int num_regions,
 
 void flashcache_detect_fallow(struct cache_c *dmc, int index);
 void flashcache_clear_fallow(struct cache_c *dmc, int index);
+
+void flashcache_bio_endio(struct bio *bio, int error, 
+			  struct cache_c *dmc, struct timeval *io_start_time);
 
 #endif /* __KERNEL__ */
 

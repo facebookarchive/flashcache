@@ -38,6 +38,7 @@
 #include <linux/sysctl.h>
 #include <linux/version.h>
 #include <linux/sort.h>
+#include <linux/time.h>
 #include <asm/kmap_types.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
@@ -378,9 +379,10 @@ do_work(struct work_struct *unused)
 	process_jobs(&_uncached_io_complete_jobs, flashcache_uncached_io_complete);
 }
 
+extern int sysctl_flashcache_lat_hist;
+
 struct kcached_job *
-new_kcached_job(struct cache_c *dmc, struct bio* bio,
-		int index)
+new_kcached_job(struct cache_c *dmc, struct bio* bio, int index)
 {
 	struct kcached_job *job;
 
@@ -408,7 +410,47 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	}
 	job->next = NULL;
 	job->md_block = NULL;
+	if (sysctl_flashcache_lat_hist)
+		do_gettimeofday(&job->io_start_time);
+	else {
+		job->io_start_time.tv_sec = 0;
+		job->io_start_time.tv_usec = 0;
+	}
 	return job;
+}
+
+static void
+flashcache_record_latency(struct cache_c *dmc, struct timeval *start_tv)
+{
+	struct timeval latency;
+	int64_t us;
+	
+	do_gettimeofday(&latency);
+	latency.tv_sec -= start_tv->tv_sec;
+	latency.tv_usec -= start_tv->tv_usec;	
+	us = latency.tv_sec * USEC_PER_SEC + latency.tv_usec;
+	us /= IO_LATENCY_GRAN_USECS;	/* histogram 250us gran, scale 10ms total */
+	if (us < IO_LATENCY_BUCKETS)
+		/* < 10ms latency, track it */
+		dmc->latency_hist[us]++;
+	else
+		/* else count it in 10ms+ bucket */
+		dmc->latency_hist_10ms++;
+}
+
+void
+flashcache_bio_endio(struct bio *bio, int error, 
+		     struct cache_c *dmc, struct timeval *start_time)
+{
+	if (unlikely(sysctl_flashcache_lat_hist && 
+		     start_time != NULL && 
+		     start_time->tv_sec != 0))
+		flashcache_record_latency(dmc, start_time);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+	bio_endio(bio, bio->bi_size, error);
+#else
+	bio_endio(bio, error);
+#endif	
 }
 
 void
