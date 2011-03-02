@@ -1,3 +1,4 @@
+COMMIT_REV ?= $(shell git describe  --always --abbrev=12)
 KERNEL_SOURCE_VERSION ?= $(shell uname -r)
 KERNEL_TREE ?= /lib/modules/$(KERNEL_SOURCE_VERSION)/build
 
