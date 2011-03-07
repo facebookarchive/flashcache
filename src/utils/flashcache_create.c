@@ -171,7 +171,8 @@ main(int argc, char **argv)
 	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
 	int cache_sectorsize;
 	int associativity = 512;
-	
+	int ret;
+
 	pname = argv[0];
 	while ((c = getopt(argc, argv, "fs:b:m:va:")) != -1) {
 		switch (c) {
@@ -293,5 +294,9 @@ main(int argc, char **argv)
 	load_module();
 	if (verbose)
 		fprintf(stderr, "Creating FlashCache Volume : \"%s\"\n", dmsetup_cmd);
-	system(dmsetup_cmd);
+	ret = system(dmsetup_cmd);
+	if (ret) {
+		fprintf(stderr, "%s failed\n", dmsetup_cmd);
+		exit(1);
+	}
 }

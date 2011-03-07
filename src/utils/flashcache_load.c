@@ -100,7 +100,8 @@ main(int argc, char **argv)
 	char *disk_devname, *ssd_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t disk_devsize, cache_devsize;
-	
+	int ret;
+
 	pname = argv[0];
 	while ((c = getopt(argc, argv, "v")) != -1) {
 		switch (c) {
@@ -180,5 +181,9 @@ main(int argc, char **argv)
 	load_module();
 	if (verbose)
 		fprintf(stderr, "Loading FlashCache Volume : %s\n", dmsetup_cmd);
-	system(dmsetup_cmd);
+	ret = system(dmsetup_cmd);
+	if (ret) {
+		fprintf(stderr, "%s failed\n", dmsetup_cmd);
+		exit(1);
+	}
 }
