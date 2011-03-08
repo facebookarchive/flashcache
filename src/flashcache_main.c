@@ -1086,16 +1086,18 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	/* 
 	 * Before we try to clean any blocks, check the last time the fallow block
-	 * detection was done. If it has been more than 60 seconds, make a sweep
-	 * through the set to detect (mark) fallow blocks.
+	 * detection was done. If it has been more than "fallow_delay" seconds, make 
+	 * a sweep through the set to detect (mark) fallow blocks.
 	 */
-	if (sysctl_fallow_delay && time_before(cache_set->fallow_tstamp, jiffies)) {
+	if (sysctl_fallow_delay && time_after(cache_set->fallow_tstamp, jiffies)) {
 		for (i = start_index ; i < end_index ; i++)
 			flashcache_detect_fallow(dmc, i);
 		cache_set->fallow_tstamp = jiffies + sysctl_fallow_delay * HZ;
 	}
 	/* If there are any dirty fallow blocks, clean them first */
-	for (i = start_index ; cache_set->dirty_fallow > 0 && i < end_index ; i++) {
+	for (i = start_index ; 
+	     sysctl_fallow_delay > 0 && cache_set->dirty_fallow > 0 && i < end_index ; 
+	     i++) {
 		cacheblk = &dmc->cache[i];
 		if (!(cacheblk->cache_state & DIRTY_FALLOW_2))
 			continue;
