@@ -1089,7 +1089,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 * detection was done. If it has been more than "fallow_delay" seconds, make 
 	 * a sweep through the set to detect (mark) fallow blocks.
 	 */
-	if (sysctl_fallow_delay && time_after(cache_set->fallow_tstamp, jiffies)) {
+	if (sysctl_fallow_delay && time_before(cache_set->fallow_tstamp, jiffies)) {
 		for (i = start_index ; i < end_index ; i++)
 			flashcache_detect_fallow(dmc, i);
 		cache_set->fallow_tstamp = jiffies + sysctl_fallow_delay * HZ;
@@ -1103,8 +1103,9 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 			continue;
 		if (!flashcache_can_clean(dmc, cache_set, nr_writes)) {
 			/*
-			 * There are fallow blocks that need cleaning, but we can't clean 
-			 * them this pass, schedule delayed cleaning later.
+			 * There are fallow blocks that need cleaning, but we 
+			 * can't clean them this pass, schedule delayed cleaning 
+			 * later.
 			 */
 			do_delayed_clean = 1;
 			goto out;

@@ -78,7 +78,7 @@ int sysctl_pid_expiry_check = 60;
 int sysctl_pid_do_expiry = 0;
 int sysctl_flashcache_fast_remove = 0;
 int sysctl_cache_all = 1;
-int sysctl_fallow_delay = 60;
+int sysctl_fallow_delay = 60*15;	/* 15 mins default */
 int sysctl_flashcache_lat_hist = 0;
 
 struct cache_c *cache_list_head = NULL;
