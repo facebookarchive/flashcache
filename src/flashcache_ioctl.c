@@ -103,13 +103,12 @@ static void
 flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
 	struct flashcache_cachectl_pid *new;
- 	unsigned long flags;
 
 	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
 	new->expiry = jiffies + sysctl_pid_expiry_check * HZ;
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->pidlist_lock);
 	if (which_list == FLASHCACHE_WHITELIST) {
 		if (dmc->num_whitelist_pids > sysctl_flashcache_max_pids)
 			flashcache_drop_pids(dmc, which_list);
@@ -148,7 +147,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 				jiffies + ((sysctl_pid_expiry_check + 1) * HZ);
 	} else
 		kfree(new);
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->pidlist_lock);
 	return;
 }
 
@@ -197,11 +196,9 @@ flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, int which_list)
 static void
 flashcache_del_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->pidlist_lock);
 	flashcache_del_pid_locked(dmc, pid, which_list);
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->pidlist_lock);
 }
 
 /*
@@ -211,14 +208,13 @@ void
 flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 {
 	struct flashcache_cachectl_pid *node, **tail;
-	unsigned long flags;
 	
 	if (which_list == FLASHCACHE_WHITELIST)
 		tail = &dmc->whitelist_tail;
 	else
 		tail = &dmc->blacklist_tail;
 	rcu_read_lock();
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->pidlist_lock);
 	node = *tail;
 	while (node != NULL) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)
@@ -246,7 +242,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 		flashcache_del_pid_locked(dmc, node->pid, which_list);
 		node = *tail;
 	}
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->pidlist_lock);
 	rcu_read_unlock();
 }
 
