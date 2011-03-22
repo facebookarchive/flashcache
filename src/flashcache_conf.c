@@ -652,14 +652,6 @@ flashcache_kcached_init(struct cache_c *dmc)
 	init_waitqueue_head(&dmc->destroyq);
 	atomic_set(&dmc->nr_jobs, 0);
 	atomic_set(&dmc->remove_in_prog, 0);
-	atomic_set(&dmc->sync_index, 0);
-	atomic_set(&dmc->clean_inprog, 0);
-	atomic_set(&dmc->nr_dirty, 0);
-	atomic_set(&dmc->cached_blocks, 0);
-	atomic_set(&dmc->pending_jobs_count, 0);
-	spin_lock_init(&dmc->cache_stat_spinlock);
-	spin_lock_init(&dmc->pidlist_lock);
-	spin_lock_init(&dmc->cache_pending_q_spinlock);
 	return 0;
 }
 
@@ -1533,16 +1525,13 @@ init:
 		dmc->cache_sets[i].fallow_tstamp = jiffies;
 		dmc->cache_sets[i].lru_tail = FLASHCACHE_LRU_NULL;
 		dmc->cache_sets[i].lru_head = FLASHCACHE_LRU_NULL;
-		spin_lock_init(&dmc->cache_sets[i].set_spin_lock);
 	}
 
 	/* Push all blocks into the set specific LRUs */
 	for (i = 0 ; i < dmc->size ; i++) {
 		dmc->cache[i].lru_prev = FLASHCACHE_LRU_NULL;
 		dmc->cache[i].lru_next = FLASHCACHE_LRU_NULL;
-		spin_lock_irq(&dmc->cache_sets[i / dmc->assoc].set_spin_lock);
 		flashcache_reclaim_lru_movetail(dmc, i);
-		spin_unlock_irq(&dmc->cache_sets[i / dmc->assoc].set_spin_lock);
 	}
 
 	order = (dmc->md_blocks - 1) * sizeof(struct cache_md_block_head);
@@ -1558,9 +1547,12 @@ init:
 	for (i = 0 ; i < dmc->md_blocks - 1 ; i++) {
 		dmc->md_blocks_buf[i].nr_in_prog = 0;
 		dmc->md_blocks_buf[i].queued_updates = NULL;
-		dmc->md_blocks_buf[i].md_io_inprog = NULL;		
-		spin_lock_init(&dmc->md_blocks_buf[i].md_block_lock);
 	}
+
+	spin_lock_init(&dmc->cache_spin_lock);
+
+	dmc->sync_index = 0;
+	dmc->clean_inprog = 0;
 
 	ti->split_io = dmc->block_size;
 	ti->private = dmc;
@@ -1580,10 +1572,10 @@ init:
 
 	for (i = 0 ; i < dmc->size ; i++) {
 		if (dmc->cache[i].cache_state & VALID)
-			atomic_inc(&dmc->cached_blocks);
+			dmc->cached_blocks++;
 		if (dmc->cache[i].cache_state & DIRTY) {
 			dmc->cache_sets[i / dmc->assoc].nr_dirty++;
-			atomic_inc(&dmc->nr_dirty);
+			dmc->nr_dirty++;
 		}
 	}
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
@@ -1650,9 +1642,9 @@ flashcache_dtr(struct dm_target *ti)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	dm_io_put(FLASHCACHE_ASYNC_SIZE); /* Must be done after md_store() */
 #endif
-	if (!sysctl_flashcache_fast_remove && atomic_read(&dmc->nr_dirty) > 0)
+	if (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0)
 		DMERR("Could not sync %d blocks to disk, cache still dirty", 
-		      atomic_read(&dmc->nr_dirty));
+		      dmc->nr_dirty);
 	DMINFO("cache jobs %d, pending jobs %d", atomic_read(&nr_cache_jobs), 
 	       atomic_read(&nr_pending_jobs));
 	for (i = 0 ; i < dmc->size ; i++)
@@ -1701,14 +1693,12 @@ flashcache_dtr(struct dm_target *ti)
 
 	}
 	if (dmc->size > 0) {
-		unsigned long cached_blocks = atomic_read(&dmc->cached_blocks);
-
 		DMINFO("conf: capacity(%luM), associativity(%u), block size(%uK), " \
 		       "total blocks(%lu), cached blocks(%lu), cache percent(%ld), dirty blocks(%d)",
 		       dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT), 
-		       dmc->size, cached_blocks, 
-		       (cached_blocks*100)/dmc->size, atomic_read(&dmc->nr_dirty));
+		       dmc->size, dmc->cached_blocks, 
+		       (dmc->cached_blocks*100)/dmc->size, dmc->nr_dirty);
 	}
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_sets);
@@ -1838,11 +1828,10 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	u_int64_t  cache_pct, dirty_pct;
 	int i;
 	int sz = 0; /* DMEMIT */
-	unsigned long cached_blocks = atomic_read(&dmc->cached_blocks);
-	
+
 	if (dmc->size > 0) {
-		dirty_pct = ((u_int64_t)atomic_read(&dmc->nr_dirty) * 100) / dmc->size;
-		cache_pct = ((u_int64_t)cached_blocks * 100) / dmc->size;
+		dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
+		cache_pct = ((u_int64_t)dmc->cached_blocks * 100) / dmc->size;
 	} else {
 		cache_pct = 0;
 		dirty_pct = 0;
@@ -1856,9 +1845,9 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->md_block_size * 512, 
-	       dmc->size, cached_blocks, 
-	       (int)cache_pct, atomic_read(&dmc->nr_dirty), (int)dirty_pct);
-	DMEMIT("\tnr_queued(%lu)\n", (unsigned long)atomic_read(&dmc->pending_jobs_count));
+	       dmc->size, dmc->cached_blocks, 
+	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
+	DMEMIT("\tnr_queued(%lu)\n", dmc->pending_jobs_count);
 	DMEMIT("Size Hist: ");
 	for (i = 1 ; i <= 32 ; i++) {
 		if (size_hist[i] > 0)
@@ -1909,7 +1898,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 			 * Kick off cache cleaning. client_destroy will wait for cleanings
 			 * to finish.
 			 */
-			printk(KERN_ALERT "Cleaning %d blocks please WAIT", atomic_read(&dmc->nr_dirty));
+			printk(KERN_ALERT "Cleaning %d blocks please WAIT", dmc->nr_dirty);
 			/* Tune up the cleaning parameters to clean very aggressively */
 			dmc->max_clean_ios_total = 20;
 			dmc->max_clean_ios_set = 10;
@@ -1918,7 +1907,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 			/* Needed to abort any in-progress cleanings, leave blocks DIRTY */
 			atomic_set(&dmc->remove_in_prog, 1);
 			printk(KERN_ALERT "Fast flashcache remove Skipping cleaning of %d blocks", 
-			       atomic_read(&dmc->nr_dirty));
+			       dmc->nr_dirty);
 		}
 		/* 
 		 * We've prevented new cleanings from starting (for the fast remove case)
@@ -1931,7 +1920,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 		wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
 		cancel_delayed_work(&dmc->delayed_clean);
 		flush_scheduled_work();
-	} while (!sysctl_flashcache_fast_remove && atomic_read(&dmc->nr_dirty) > 0);
+	} while (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0);
 }
 
 static int 
@@ -2113,6 +2102,7 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 {
 	struct cache_c *dmc;
 	struct flashcache_cachectl_pid *pid_list;
+ 	unsigned long flags;
 
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
@@ -2121,7 +2111,7 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 	for (dmc = cache_list_head ; 
 	     dmc != NULL ; 
 	     dmc = dmc->next_cache) {
-		spin_lock(&dmc->pidlist_lock);
+		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		seq_printf(seq, "Blacklist: ");
 		pid_list = dmc->blacklist_head;
 		while (pid_list != NULL) {
@@ -2136,7 +2126,7 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 			pid_list = pid_list->next;
 		}
 		seq_printf(seq, "\n");
-		spin_unlock(&dmc->pidlist_lock);
+		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
 	smp_mb__after_clear_bit();

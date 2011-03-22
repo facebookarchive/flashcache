@@ -54,42 +54,6 @@
 #endif
 
 /*
- * Finegrained locking note :
- * All of flashcache used to be protected by a single cache_spin_lock.
- * That has been removed, and per-set spinlocks have been introduced.
-
-struct cache_set : set_spin_lock
-Protects cache set and every cacheblock in the cache set.
-Can be acquired from softirq paths !
-
-struct cache_md_block_head : md_block_lock
-Protects state for the metadata block head.
-Can be acquired from softirq paths !
-
-The following locks protect various state within the dmc. All of these
-are held for short sections.
-struct cache_c : cache_stat_spinlock
-struct cache_c : pidlist_lock
-struct cache_c : cache_pending_q_spinlock
-struct cache_c : skipclean_lock
-
-Lock Ordering. set_spin_lock must be acquired before any of the other 
-locks.
-
-set_spin_lock	
-(Acquired in increasing order of sets !
-If you must acquire 2 set_spin_locks, acquire the lock on set i before
-set i+1. Acquiring locks on multiple sets should be done using 
-flashcache_setlocks_multiget/drop).
-	md_block_lock
-	cache_stat_spinlock
-	pidlist_lock
-	cache_pending_q_spinlock
-	skipclean_lock
-
- */
-
-/*
  * Block checksums :
  * Block checksums seem a good idea (especially for debugging, I found a couple 
  * of bugs with this), but in practice there are a number of issues with this
@@ -160,7 +124,6 @@ struct cache_set {
 	u_int16_t		lru_head, lru_tail;
 	u_int16_t		dirty_fallow;
 	unsigned long 		fallow_tstamp;
-	spinlock_t 		set_spin_lock;
 };
 
 struct flashcache_errors {
@@ -228,20 +191,21 @@ struct cache_c {
 #endif
 
 	int 			on_ssd_version;
+	
+	spinlock_t		cache_spin_lock;
 
 	struct cacheblock	*cache;	/* Hash table for cache blocks */
 	struct cache_set	*cache_sets;
 	struct cache_md_block_head *md_blocks_buf;
+
+	unsigned int md_block_size;	/* Metadata block size in sectors */
 	
-	/* None of these change once cache is created */
-	unsigned int	 md_block_size;	/* Metadata block size in sectors */
-	sector_t 	size;			/* Cache size */
-	unsigned int 	assoc;		/* Cache associativity */
-	unsigned int 	block_size;	/* Cache block size */
-	unsigned int 	block_shift;	/* Cache block size in bits */
-	unsigned int 	block_mask;	/* Cache block mask */
-	unsigned int 	consecutive_shift;	/* Consecutive blocks size in bits */
-	int		md_blocks;		/* Numbers of metadata blocks, including header */
+	sector_t size;			/* Cache size */
+	unsigned int assoc;		/* Cache associativity */
+	unsigned int block_size;	/* Cache block size */
+	unsigned int block_shift;	/* Cache block size in bits */
+	unsigned int block_mask;	/* Cache block mask */
+	unsigned int consecutive_shift;	/* Consecutive blocks size in bits */
 
 	wait_queue_head_t destroyq;	/* Wait queue for I/O completion */
 	/* XXX - Updates of nr_jobs should happen inside the lock. But doing it outside
@@ -252,16 +216,15 @@ struct cache_c {
 #define FAST_REMOVE    2
 	atomic_t remove_in_prog;
 
-	/* This spinlock is unused now, because the state is atomic_t */
-	spinlock_t 	cache_stat_spinlock;
-	int		dirty_thresh_set;	/* Per set dirty threshold to start cleaning */
-	int		max_clean_ios_set;	/* Max cleaning IOs per set */
-	int		max_clean_ios_total;	/* Total max cleaning IOs */
-	atomic_t	clean_inprog;
-	atomic_t	sync_index;
-	atomic_t	nr_dirty;
-	atomic_t 	cached_blocks;	/* Number of cached blocks */
-	atomic_t 	pending_jobs_count;
+	int	dirty_thresh_set;	/* Per set dirty threshold to start cleaning */
+	int	max_clean_ios_set;	/* Max cleaning IOs per set */
+	int	max_clean_ios_total;	/* Total max cleaning IOs */
+	int	clean_inprog;
+	int	sync_index;
+	int	nr_dirty;
+	unsigned long cached_blocks;	/* Number of cached blocks */
+	unsigned long pending_jobs_count;
+	int	md_blocks;		/* Numbers of metadata blocks, including header */
 
 	/* Stats */
 	struct flashcache_stats flashcache_stats;
@@ -282,14 +245,13 @@ struct cache_c {
 	struct delayed_work delayed_clean;
 #endif
 
-	spinlock_t pidlist_lock;	/* XXX- RCU! */
 	unsigned long pid_expire_check;
+
 	struct flashcache_cachectl_pid *blacklist_head, *blacklist_tail;
 	struct flashcache_cachectl_pid *whitelist_head, *whitelist_tail;
 	int num_blacklist_pids, num_whitelist_pids;
 	unsigned long blacklist_expire_check, whitelist_expire_check;
 
-	spinlock_t	cache_pending_q_spinlock;
 #define PENDING_JOB_HASH_SIZE		32
 	struct pending_job *pending_job_hashbuckets[PENDING_JOB_HASH_SIZE];
 	
@@ -442,7 +404,6 @@ struct flash_cacheblock {
 struct cache_md_block_head {
 	u_int32_t		nr_in_prog;
 	struct kcached_job	*queued_updates, *md_io_inprog;
-	spinlock_t		md_block_lock;
 };
 
 #define MIN_JOBS 1024

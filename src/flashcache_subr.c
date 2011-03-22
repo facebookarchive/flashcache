@@ -145,9 +145,7 @@ flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 		       int index, int action, struct pending_job *job)
 {
 	struct pending_job **head;
-
-	VERIFY(spin_is_locked(&dmc->cache_sets[index / dmc->assoc].set_spin_lock));
-	spin_lock(&dmc->cache_pending_q_spinlock);
+	
 	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
 	DPRINTK("flashcache_enq_pending: Queue to pending Q Index %d %llu",
 		index, bio->bi_sector);
@@ -160,10 +158,9 @@ flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 	if (*head)
 		(*head)->prev = job;
 	*head = job;
-	atomic_inc(&dmc->pending_jobs_count);
-	spin_unlock(&dmc->cache_pending_q_spinlock);
 	dmc->cache[index].nr_queued++;
 	dmc->flashcache_stats.enqueues++;
+	dmc->pending_jobs_count++;
 }
 
 /*
@@ -176,7 +173,7 @@ flashcache_deq_pending(struct cache_c *dmc, int index)
 	int moved = 0;
 	struct pending_job **head;
 	
-	spin_lock(&dmc->cache_pending_q_spinlock);
+	VERIFY(spin_is_locked(&dmc->cache_spin_lock));
 	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
 	for (node = *head ; node != NULL ; node = next) {
 		next = node->next;
@@ -202,9 +199,8 @@ flashcache_deq_pending(struct cache_c *dmc, int index)
 			moved++;
 		}
 	}
-	VERIFY(atomic_read(&dmc->pending_jobs_count) >= moved);
-	atomic_sub(moved, &dmc->pending_jobs_count);
-	spin_unlock(&dmc->cache_pending_q_spinlock);
+	VERIFY(dmc->pending_jobs_count >= moved);
+	dmc->pending_jobs_count -= moved;
 	return movelist;
 }
 
@@ -273,12 +269,11 @@ flashcache_store_checksum(struct kcached_job *job)
 {
 	u_int64_t sum;
 	unsigned long flags;
-	int set = index / dmc->assoc;
 	
 	sum = flashcache_compute_checksum(job->bio);
-	spin_lock_irqsave(&dmc->cache_sets[set].set_spin_lock, flags);
+	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
 	job->dmc->cache[job->index].checksum = sum;
-	spin_unlock_irqrestore(&dmc->cache_sets[set].set_spin_lock, flags);
+	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
 }
 
 int
@@ -287,10 +282,9 @@ flashcache_validate_checksum(struct kcached_job *job)
 	u_int64_t sum;
 	int retval;
 	unsigned long flags;
-	int set = index / dmc->assoc;
 	
 	sum = flashcache_compute_checksum(job->bio);
-	spin_lock_irqsave(&dmc->cache_sets[set].set_spin_lock, flags);
+	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
 	if (likely(job->dmc->cache[job->index].checksum == sum)) {
 		job->dmc->flashcache_stats.checksum_valid++;		
 		retval = 0;
@@ -298,7 +292,7 @@ flashcache_validate_checksum(struct kcached_job *job)
 		job->dmc->flashcache_stats.checksum_invalid++;
 		retval = 1;
 	}
-	spin_unlock_irqrestore(&dmc->cache_sets[set].set_spin_lock, flags);
+	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
 	return retval;
 }
 #endif
@@ -310,13 +304,14 @@ struct kcached_job *
 pop(struct list_head *jobs)
 {
 	struct kcached_job *job = NULL;
+	unsigned long flags;
 
-	spin_lock_irq(&_job_lock);
+	spin_lock_irqsave(&_job_lock, flags);
 	if (!list_empty(jobs)) {
 		job = list_entry(jobs->next, struct kcached_job, list);
 		list_del(&job->list);
 	}
-	spin_unlock_irq(&_job_lock);
+	spin_unlock_irqrestore(&_job_lock, flags);
 	return job;
 }
 
@@ -466,7 +461,6 @@ flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index)
 	int my_index = index - start_index;
 	struct cacheblock *cacheblk = &dmc->cache[index];
 
-	VERIFY(spin_is_locked(&dmc->cache_sets[index / dmc->assoc].set_spin_lock));
 	/* Remove from LRU */
 	if (likely((cacheblk->lru_prev != FLASHCACHE_LRU_NULL) ||
 		   (cacheblk->lru_next != FLASHCACHE_LRU_NULL))) {
@@ -532,8 +526,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	struct dbn_index_pair *set_dirty_list = NULL;
 	int ix, nr_set_dirty;
 	struct cacheblock *cacheblk;
-
-	VERIFY(spin_is_locked(&dmc->cache_sets[set].set_spin_lock));
+			
 	if (unlikely(*nr_writes == 0))
 		return;
 	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
@@ -768,11 +761,11 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 	
 	if (dmc->flashcache_stats.cleanings % 1000)
 		return;
-	if (!atomic_read(&dmc->nr_dirty) || !dmc->size || !printk_ratelimit())
+	if (!dmc->nr_dirty || !dmc->size || !printk_ratelimit())
 		return;
-	dirty_pct = ((u_int64_t)atomic_read(&dmc->nr_dirty) * 100) / dmc->size;
+	dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
 	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %llu%%", 
-	       atomic_read(&dmc->nr_dirty), dirty_pct);
+	       dmc->nr_dirty, dirty_pct);
 	printk(KERN_INFO "\r");
 }
 
