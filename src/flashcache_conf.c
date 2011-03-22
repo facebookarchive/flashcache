@@ -63,6 +63,7 @@ int sysctl_flashcache_reclaim_policy = FLASHCACHE_FIFO;
 int sysctl_flashcache_write_merge = 1;
 /* XXX - Some access to this are MP unsafe, but harmless. Not worth fixing */
 int sysctl_flashcache_error_inject = 0;
+int sysctl_fallow_clean_speed = 2;
 
 static struct ctl_table_header *flashcache_table_header;
 
@@ -512,6 +513,16 @@ static ctl_table flashcache_table[] = {
 #endif
 		.procname	= "cache_all",
 		.data		= &sysctl_cache_all,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+		.ctl_name	= CTL_UNNUMBERED,
+#endif
+		.procname	= "fallow_clean_speed",
+		.data		= &sysctl_fallow_clean_speed,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
@@ -1523,6 +1534,7 @@ init:
 		dmc->cache_sets[i].clean_inprog = 0;
 		dmc->cache_sets[i].dirty_fallow = 0;
 		dmc->cache_sets[i].fallow_tstamp = jiffies;
+		dmc->cache_sets[i].fallow_next_cleaning = jiffies;
 		dmc->cache_sets[i].lru_tail = FLASHCACHE_LRU_NULL;
 		dmc->cache_sets[i].lru_head = FLASHCACHE_LRU_NULL;
 	}

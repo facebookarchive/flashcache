@@ -94,6 +94,7 @@ extern int sysctl_flashcache_error_inject;
 extern int sysctl_flashcache_stop_sync;
 extern int sysctl_flashcache_reclaim_policy;
 extern int sysctl_pid_do_expiry;
+extern int sysctl_fallow_clean_speed;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 int dm_io_async_bvec(unsigned int num_regions, 
@@ -1063,7 +1064,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	struct cache_set *cache_set = &dmc->cache_sets[set];
 	struct cacheblock *cacheblk;
 	int do_delayed_clean = 0;
-
+	
 	/* 
 	 * If a removal of this device is in progress, don't kick off 
 	 * any more cleanings. This isn't sufficient though. We still need to
@@ -1089,14 +1090,17 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 * detection was done. If it has been more than "fallow_delay" seconds, make 
 	 * a sweep through the set to detect (mark) fallow blocks.
 	 */
-	if (sysctl_fallow_delay && time_before(cache_set->fallow_tstamp, jiffies)) {
+	if (sysctl_fallow_delay && time_after(jiffies, cache_set->fallow_tstamp)) {
 		for (i = start_index ; i < end_index ; i++)
 			flashcache_detect_fallow(dmc, i);
 		cache_set->fallow_tstamp = jiffies + sysctl_fallow_delay * HZ;
 	}
 	/* If there are any dirty fallow blocks, clean them first */
 	for (i = start_index ; 
-	     sysctl_fallow_delay > 0 && cache_set->dirty_fallow > 0 && i < end_index ; 
+	     (sysctl_fallow_delay > 0 &&
+	      cache_set->dirty_fallow > 0 &&
+	      time_after(jiffies, cache_set->fallow_next_cleaning) &&
+	      i < end_index) ; 
 	     i++) {
 		cacheblk = &dmc->cache[i];
 		if (!(cacheblk->cache_state & DIRTY_FALLOW_2))
@@ -1119,6 +1123,8 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		dmc->flashcache_stats.fallow_cleanings++;
 		nr_writes++;
 	}
+	if (nr_writes > 0)
+		cache_set->fallow_next_cleaning = jiffies + HZ / sysctl_fallow_clean_speed;
 	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
 	    !flashcache_can_clean(dmc, cache_set, nr_writes))
 		goto out;

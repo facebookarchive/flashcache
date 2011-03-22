@@ -124,6 +124,7 @@ struct cache_set {
 	u_int16_t		lru_head, lru_tail;
 	u_int16_t		dirty_fallow;
 	unsigned long 		fallow_tstamp;
+	unsigned long 		fallow_next_cleaning;
 };
 
 struct flashcache_errors {
