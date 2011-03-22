@@ -375,37 +375,38 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 	dmc->flashcache_stats.pending_inval++;
 	cacheblk->cache_state &= ~VALID;
 	cacheblk->cache_state |= INVALID;
-	freelist = flashcache_deq_pending(dmc, cacheblk - &dmc->cache[0]);
-	while (freelist != NULL) {
-		VERIFY(!(cacheblk->cache_state & DIRTY));
-		pending_job = freelist;
-		freelist = pending_job->next;
-		VERIFY(cacheblk->nr_queued > 0);
-		cacheblk->nr_queued--;
-		if (pending_job->action == INVALIDATE) {
-			DPRINTK("flashcache_do_pending: INVALIDATE  %llu",
-				next_job->bio->bi_sector);
-			VERIFY(pending_job->bio != NULL);
-			queued = flashcache_inval_blocks(dmc, pending_job->bio);
-			if (queued) {
-				if (unlikely(queued < 0)) {
-					/*
-					 * Memory allocation failure inside inval_blocks.
-					 * Fail this io.
-					 */
-					flashcache_bio_endio(pending_job->bio, -EIO, dmc, NULL);
+	while ((freelist = flashcache_deq_pending(dmc, index)) != NULL) {
+		while (freelist != NULL) {
+			VERIFY(!(cacheblk->cache_state & DIRTY));
+			pending_job = freelist;
+			freelist = pending_job->next;
+			VERIFY(cacheblk->nr_queued > 0);
+			cacheblk->nr_queued--;
+			if (pending_job->action == INVALIDATE) {
+				DPRINTK("flashcache_do_pending: INVALIDATE  %llu",
+					next_job->bio->bi_sector);
+				VERIFY(pending_job->bio != NULL);
+				queued = flashcache_inval_blocks(dmc, pending_job->bio);
+				if (queued) {
+					if (unlikely(queued < 0)) {
+						/*
+						 * Memory allocation failure inside inval_blocks.
+						 * Fail this io.
+						 */
+						flashcache_bio_endio(pending_job->bio, -EIO, dmc, NULL);
+					}
+					flashcache_free_pending_job(pending_job);
+					continue;
 				}
-				flashcache_free_pending_job(pending_job);
-				continue;
 			}
+			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+			DPRINTK("flashcache_do_pending: Sending down IO %llu",
+				pending_job->bio->bi_sector);
+			/* Start uncached IO */
+			flashcache_start_uncached_io(dmc, pending_job->bio);
+			flashcache_free_pending_job(pending_job);
+			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		}
-		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		DPRINTK("flashcache_do_pending: Sending down IO %llu",
-			pending_job->bio->bi_sector);
-		/* Start uncached IO */
-		flashcache_start_uncached_io(dmc, pending_job->bio);
-		flashcache_free_pending_job(pending_job);
-		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	}
 	VERIFY(cacheblk->nr_queued == 0);
 	cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
