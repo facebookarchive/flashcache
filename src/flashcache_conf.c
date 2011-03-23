@@ -82,6 +82,9 @@ int sysctl_cache_all = 1;
 int sysctl_fallow_delay = 60*15;	/* 15 mins default */
 int sysctl_flashcache_lat_hist = 0;
 
+static int fallow_clean_speed_min = 1;
+static int fallow_clean_speed_max = 100;
+
 struct cache_c *cache_list_head = NULL;
 struct work_struct _kcached_wq;
 u_int64_t size_hist[33];
@@ -525,7 +528,9 @@ static ctl_table flashcache_table[] = {
 		.data		= &sysctl_fallow_clean_speed,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= &fallow_clean_speed_min,
+		.extra2		= &fallow_clean_speed_max,
 	},
 	{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
