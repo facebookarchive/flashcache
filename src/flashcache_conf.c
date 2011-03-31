@@ -2245,7 +2245,7 @@ flashcache_init(void)
 	}
 #endif
 	flashcache_control = (struct flashcache_control_s *)
-		kmalloc(sizeof(struct flashcache_control_s *), GFP_KERNEL);
+		kmalloc(sizeof(struct flashcache_control_s), GFP_KERNEL);
 	flashcache_control->synch_flags = 0;
 	register_reboot_notifier(&flashcache_notifier);
 	return r;
