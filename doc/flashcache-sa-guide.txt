@@ -170,6 +170,9 @@ dev.flashcache.fallow_delay:
 	read or written) for fallow_delay seconds. Default is 60 
 	seconds. 
 	Setting this to 0 disables idle cleaning completely.
+dev.flashcache.fallow_clean_speed:
+	The maximum number of "fallow clean" disk writes per set 
+	per second. Defaults to 2.
 dev.flashcache.io_latency_hist:
 	Compute IO latencies and plot these out on a histogram.
 	The scale is 250 usecs. This is disabled by default since 
