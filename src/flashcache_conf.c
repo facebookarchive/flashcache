@@ -3,7 +3,7 @@
  *  FlashCache: Device mapper target for block-level disk caching
  *
  *  Copyright 2010 Facebook, Inc.
- *  Author: Mohan Srinivasan (mohan@facebook.com)
+ *  Author: Mohan Srinivasan (mohan@fb.com)
  *
  *  Based on DM-Cache:
  *   Copyright (C) International Business Machines Corp., 2006
