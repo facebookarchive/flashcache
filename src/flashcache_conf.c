@@ -1058,7 +1058,7 @@ flashcache_md_load(struct cache_c *dmc)
 	struct dm_io_region where;
 #endif
 	int i, j;
-	int size, slots_read;
+	u_int64_t size, slots_read;
 	int clean_shutdown;
 	int dirty_loaded = 0;
 	sector_t order, data_size;
@@ -1161,7 +1161,7 @@ flashcache_md_load(struct cache_c *dmc)
 	size = dmc->size;
 	i = 0;
 	while (size > 0) {
-		slots_read = min(size, (int)(MD_SLOTS_PER_BLOCK(dmc) * METADATA_IO_NUM_BLOCKS(dmc)));
+		slots_read = min(size, (u_int64_t)(MD_SLOTS_PER_BLOCK(dmc) * METADATA_IO_NUM_BLOCKS(dmc)));
 		if (slots_read % MD_SLOTS_PER_BLOCK(dmc))
 			where.count = (1 + (slots_read / MD_SLOTS_PER_BLOCK(dmc))) * MD_SECTORS_PER_BLOCK(dmc);
 		else
