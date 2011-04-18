@@ -84,6 +84,14 @@ flashcache_start() {
         return $OCF_SUCCESS
     fi
 
+    # If the file exists here, but flashcache_monitor has determined
+    # the resource isn't already running, then the file probably is
+    # owned by something else. Bail out to avoid breaking things.
+    if [ -e /dev/mapper/${OCF_RESKEY_name} ]; then
+	ocf_log err "Existing file /dev/mapper/${OCF_RESKEY_name} would be overwritten by flashcache. Bailing out."
+	exit $OCF_ERR_INSTALLED
+    fi
+
     if [ ! -e /proc/flashcache_version ]; then
 	ocf_log debug "Flashcache support not loaded, loading module"
 	ocf_run modprobe -v flashcache || exit $OCF_ERR_INSTALLED
@@ -162,16 +170,20 @@ flashcache_monitor() {
     flashcache_validate_all || exit $?
 
     # First, see if a block device exists in /dev/mapper
-    blockdev=/dev/mapper/${OCF_RESKEY_name} 
-    if [ -b ${blockdev} ]; then
-	case "`stat -L -c "%t" ${blockdev}`" in
-	    "fc"|"fd")
-		ocf_log debug "Block device ${blockdev} exists and is a device-mapper device"
-		;;
-	    *)
-		ocf_log warn "Existing block device ${blockdev} is not a device-mapper device!"
-		return $OCF_NOT_RUNNING
-	esac
+    blockdev=/dev/mapper/${OCF_RESKEY_name}
+    if [ -e ${blockdev} ]; then
+	if [ -b ${blockdev} ]; then
+	    case "`stat -L -c "%t" ${blockdev}`" in
+		"fc"|"fd")
+		    ocf_log debug "Block device ${blockdev} exists and is a device-mapper device"
+		    ;;
+		*)
+		    ocf_log warn "Existing block device ${blockdev} is not a device-mapper device!"
+		    return $OCF_NOT_RUNNING
+	    esac
+	else
+	    ocf_log warn "File ${blockdev} exists, but is not a block device!"
+	fi
     fi
 
     # OK, we have a block device and it has the correct major
