@@ -88,7 +88,7 @@ flashcache_start() {
     # the resource isn't already running, then the file probably is
     # owned by something else. Bail out to avoid breaking things.
     if [ -e /dev/mapper/${OCF_RESKEY_name} ]; then
-	ocf_log err "Existing file /dev/mapper/${OCF_RESKEY_name} would be overwritten by flashcache. Bailing out."
+	ocf_log err "Existing file /dev/mapper/${OCF_RESKEY_name} would be overwritten by ${OCF_RESOURCE_INSTANCE}. Bailing out."
 	exit $OCF_ERR_INSTALLED
     fi
 
