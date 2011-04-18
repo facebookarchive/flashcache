@@ -164,12 +164,14 @@ flashcache_monitor() {
     # First, see if a block device exists in /dev/mapper
     blockdev=/dev/mapper/${OCF_RESKEY_name} 
     if [ -b ${blockdev} ]; then
-	if [ "`stat -L -c "%t" ${blockdev}`" = "fc" ]; then
-	    ocf_log debug "Block device ${blockdev} exists and is a device-mapper device"
-	else
-	    ocf_log warn "Existing block device ${blockdev} is not a device-mapper device!"
-	    return $OCF_NOT_RUNNING
-	fi
+	case "`stat -L -c "%t" ${blockdev}`" in
+	    "fc"|"fd")
+		ocf_log debug "Block device ${blockdev} exists and is a device-mapper device"
+		;;
+	    *)
+		ocf_log warn "Existing block device ${blockdev} is not a device-mapper device!"
+		return $OCF_NOT_RUNNING
+	esac
     fi
 
     # OK, we have a block device and it has the correct major
