@@ -1652,7 +1652,11 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 #define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
 #else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
 #define bio_barrier(bio)        ((bio)->bi_rw & REQ_HARDBARRIER)
+#else
+#define bio_barrier(bio)        ((bio)->bi_rw & REQ_FLUSH)
+#endif
 #endif
 #endif
 
