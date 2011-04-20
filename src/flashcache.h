@@ -511,7 +511,6 @@ int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where,
 			     int rw, void *data);
 #endif
 void flashcache_update_sync_progress(struct cache_c *dmc);
-void flashcache_unplug_device(struct block_device *bdev);
 void flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 			    int index, int action, struct pending_job *job);
 struct pending_job *flashcache_deq_pending(struct cache_c *dmc, int index);

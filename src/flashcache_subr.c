@@ -717,7 +717,6 @@ flashcache_dm_io_sync_vm(struct cache_c *dmc,
 #else
 	flashcache_dm_io_async_vm(dmc, 1, where, rw, data, flashcache_dm_io_sync_vm_callback, &state);
 #endif
-	flashcache_unplug_device(where->bdev);	
 	spin_lock_irq(&flashcache_dm_io_sync_spinlock);
 	while (state.flags & FLASHCACHE_DM_IO_SYNC_INPROG) {
 		prepare_to_wait(&flashcache_dm_io_sync_waitqueue, &wait, 
@@ -767,18 +766,6 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %llu%%", 
 	       dmc->nr_dirty, dirty_pct);
 	printk(KERN_INFO "\r");
-}
-
-void
-flashcache_unplug_device(struct block_device *bdev)
-{
-	struct backing_dev_info *bdi;
-	
-	bdi = blk_get_backing_dev_info(bdev);
-	if (bdi) {
-		if (bdi->unplug_io_fn)
-			blk_run_backing_dev(bdi, NULL);
-	}
 }
 
 EXPORT_SYMBOL(flashcache_alloc_cache_job);
