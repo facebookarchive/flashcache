@@ -1,4 +1,5 @@
 EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./
+EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux
 UTILS_CFLAGS=-I./
 
 obj-m += flashcache-wt.o
