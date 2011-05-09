@@ -405,7 +405,7 @@ kcached_init(struct cache_c *dmc)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	int r;
 
-	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
+	r = dm_io_get(FLASHCACHE_WT_ASYNC_SIZE);
 	if (r) {
 		DMERR("flashcache_kcached_init: Could not resize dm io pool");
 		return r;
@@ -422,7 +422,7 @@ kcached_client_destroy(struct cache_c *dmc)
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	dm_io_put(FLASHCACHE_ASYNC_SIZE);
+	dm_io_put(FLASHCACHE_WT_ASYNC_SIZE);
 #endif
 }
 
