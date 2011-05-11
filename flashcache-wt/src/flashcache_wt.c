@@ -399,6 +399,10 @@ do_work(struct work_struct *work)
 /* DM async IO mempool sizing */
 #define FLASHCACHE_WT_ASYNC_SIZE 1024
 
+#ifdef ALLOW_DM_IO_GET_FAILURES
+static int dm_io_get_failures = 0;
+#endif
+
 static int 
 kcached_init(struct cache_c *dmc)
 {
@@ -408,7 +412,11 @@ kcached_init(struct cache_c *dmc)
 	r = dm_io_get(FLASHCACHE_WT_ASYNC_SIZE);
 	if (r) {
 		DMERR("flashcache_kcached_init: Could not resize dm io pool");
+#ifdef ALLOW_DM_IO_GET_FAILURES
+		dm_io_get_failures++;
+#else		
 		return r;
+#endif # ALLOW_DM_IO_GET_FAILURES
 	}
 #endif
 	init_waitqueue_head(&dmc->destroyq);
@@ -422,6 +430,11 @@ kcached_client_destroy(struct cache_c *dmc)
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
+#ifdef ALLOW_DM_IO_GET_FAILURES
+	if (dm_io_get_failures > 0) {
+	  dm_io_get_failures--;
+	} else
+#endif # ALLOW_DM_IO_GET_FAILURES
 	dm_io_put(FLASHCACHE_WT_ASYNC_SIZE);
 #endif
 }

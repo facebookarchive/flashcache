@@ -653,6 +653,10 @@ flashcache_jobs_exit(void)
 	_pending_job_cache = NULL;
 }
 
+#ifdef ALLOW_DM_IO_GET_FAILURES
+static int dm_io_get_failures = 0;
+#endif
+
 static int 
 flashcache_kcached_init(struct cache_c *dmc)
 {
@@ -662,7 +666,11 @@ flashcache_kcached_init(struct cache_c *dmc)
 	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
 	if (r) {
 		DMERR("flashcache_kcached_init: Could not resize dm io pool");
+#ifdef ALLOW_DM_IO_GET_FAILURES
+		dm_io_get_failures++;
+#else		
 		return r;
+#endif # ALLOW_DM_IO_GET_FAILURES
 	}
 #endif
 	init_waitqueue_head(&dmc->destroyq);
@@ -677,6 +685,11 @@ flashcache_kcached_client_destroy(struct cache_c *dmc)
 	/* Wait for all IOs */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));	
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
+#ifdef ALLOW_DM_IO_GET_FAILURES
+	if (dm_io_get_failures > 0) {
+	        dm_io_get_failures--;
+	} else
+#endif # ALLOW_DM_IO_GET_FAILURES
 	dm_io_put(FLASHCACHE_ASYNC_SIZE);
 #endif
 }
@@ -1657,6 +1670,11 @@ flashcache_dtr(struct dm_target *ti)
 	flashcache_sync_for_remove(dmc);
 	flashcache_md_store(dmc);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
+#ifdef ALLOW_DM_IO_GET_FAILURES
+	if (dm_io_get_failures > 0) {
+	        dm_io_get_failures--;
+	} else
+#endif # ALLOW_DM_IO_GET_FAILURES
 	dm_io_put(FLASHCACHE_ASYNC_SIZE); /* Must be done after md_store() */
 #endif
 	if (!sysctl_flashcache_fast_remove && dmc->nr_dirty > 0)
