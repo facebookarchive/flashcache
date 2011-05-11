@@ -4,7 +4,7 @@ KERNEL_TREE ?= /lib/modules/$(shell uname -r)/build
 export COMMIT_REV
 
 all:
-	$(MAKE) -C src KERNEL_TREE=$(KERNEL_TREE) PWD=$(shell pwd)/src all
+	$(MAKE) -C src KERNEL_TREE=$(KERNEL_TREE) PWD=$(shell pwd)/src FEATURES=$(FEATURES) all
 
 install:
 	$(MAKE) -C src KERNEL_TREE=$(KERNEL_TREE) PWD=$(shell pwd)/src install
