@@ -117,6 +117,7 @@ int dm_io_async_bvec(unsigned int num_regions,
 }
 #endif
 
+#ifdef FLASHCACHE_WT_CHECKSUMS
 static u_int64_t
 flashcache_wt_compute_checksum(struct bio *bio)
 {
@@ -175,6 +176,18 @@ flashcache_wt_validate_checksum(struct kcached_job *job)
 	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
 	return retval;
 }
+#else /* FLASHCACHE_WT_CHECKSUMS */
+static void
+flashcache_wt_store_checksum(struct kcached_job *job)
+{
+}
+
+static int
+flashcache_wt_validate_checksum(struct kcached_job *job)
+{
+	return 0;
+}
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 
 static int 
 jobs_init(void)
@@ -345,7 +358,9 @@ do_io(struct kcached_job *job)
 	VERIFY(job->rw == WRITECACHE);
 	/* Write to cache device */
 	flashcache_wt_store_checksum(job);
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	dmc->checksum_store++;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 	dmc->cache_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_wt_io_callback, job);
@@ -636,7 +651,6 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
 		bio->bi_sector, bio->bi_size);
 
-	dmc->reads++;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	res = cache_lookup(dmc, bio, &index);
 	/* Cache Hit */
@@ -784,7 +798,6 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	unsigned long flags;
 	struct kcached_job *job;
 
-	dmc->writes++;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	if (cache_invalidate_blocks(dmc, bio) > 0) {
 		/* A non zero return indicates an inprog invalidation */
@@ -863,7 +876,13 @@ flashcache_wt_map(struct dm_target *ti, struct bio *bio,
 
 	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
 
-	if (to_sector(bio->bi_size) != dmc->block_size) {
+	if (bio_data_dir(bio) == READ)
+		dmc->reads++;
+	else
+		dmc->writes++;		
+
+	if (to_sector(bio->bi_size) != dmc->block_size ||
+	    (dmc->write_around_mode && (bio_data_dir(bio) == WRITE))) {
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		(void)cache_invalidate_blocks(dmc, bio);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
@@ -1002,7 +1021,18 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	if (argc >= 3) {
-		if (sscanf(argv[2], "%u", &dmc->block_size) != 1) {
+		if (sscanf(argv[2], "%d", &dmc->write_around_mode) != 1) {
+			ti->error = "flashcache-wt: Invalid mode";
+			r = -EINVAL;
+			goto bad4;
+		}
+	} else
+		dmc->assoc = DEFAULT_CACHE_ASSOC;
+	
+
+
+	if (argc >= 4) {
+		if (sscanf(argv[3], "%u", &dmc->block_size) != 1) {
 			ti->error = "flashcache-wt: Invalid block size";
 			r = -EINVAL;
 			goto bad4;
@@ -1018,8 +1048,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->block_mask = dmc->block_size - 1;
 
 	/* dmc->size is specified in sectors here, and converted to blocks below */
-	if (argc >= 4) {
-		if (sscanf(argv[3], "%lu", &dmc->size) != 1) {
+	if (argc >= 5) {
+		if (sscanf(argv[4], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache-wt: Invalid cache size";
 			r = -EINVAL;
 			goto bad4;
@@ -1028,8 +1058,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	}
 
-	if (argc >= 5) {
-		if (sscanf(argv[4], "%u", &dmc->assoc) != 1) {
+	if (argc >= 6) {
+		if (sscanf(argv[5], "%u", &dmc->assoc) != 1) {
 			ti->error = "flashcache-wt: Invalid cache associativity";
 			r = -EINVAL;
 			goto bad4;
@@ -1042,7 +1072,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		}
 	} else
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
-	
+
 	/* 
 	 * Convert size (in sectors) to blocks.
 	 * Then round size (in blocks now) down to a multiple of associativity 
@@ -1098,7 +1128,9 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	/* Initialize the cache structs */
 	for (i = 0; i < dmc->size ; i++) {
 		dmc->cache[i].dbn = 0;
+#ifdef FLASHCACHE_WT_CHECKSUMS
 		dmc->cache[i].checksum = 0;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 		dmc->cache_state[i] = INVALID;
 	}
 
@@ -1117,9 +1149,11 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->cached_blocks = 0;
 	dmc->cache_wr_replace = 0;
 
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	dmc->checksum_store = 0;
 	dmc->checksum_valid = 0;
 	dmc->checksum_invalid = 0;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 	
 	ti->split_io = dmc->block_size;
 	ti->private = dmc;
@@ -1160,13 +1194,21 @@ cache_dtr(struct dm_target *ti)
 		else
 			read_hit_pct = 0;
 		DMINFO("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
+#ifdef FLASHCACHE_WT_CHECKSUMS
 		DMINFO("\tcache hits(%lu), cache hit percent (%d)\n"	\
 		       "\treplacement(%lu), write replacement(%lu)\n"	\
 		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
 		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
 		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
-		       dmc->rd_invalidates, dmc->wr_invalidates, dmc->checksum_store, 
-		       dmc->checksum_valid, dmc->checksum_invalid);
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+#else
+		DMINFO("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates);
+#endif
 		if (dmc->size > 0)
 			cache_pct = (dmc->cached_blocks * 100) / dmc->size;
 		else 
@@ -1203,19 +1245,62 @@ flashcache_wt_status_info(struct cache_c *dmc, status_type_t type,
 	else
 		read_hit_pct = 0;
 	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
-	DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n" \
-	       "\treplacement(%lu), write replacement(%lu)\n" \
-	       "\tread invalidates(%lu), write invalidates(%lu)\n" \
-	       "\tuncached reads(%lu), uncached writes(%lu)\n" \
-	       "\tdisk reads(%lu), disk writes(%lu)\n" \
-	       "\tcache reads(%lu), cache writes(%lu)\n" \
-	       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
-	       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
-	       dmc->rd_invalidates, dmc->wr_invalidates, 
-	       dmc->uncached_reads, dmc->uncached_writes,
-	       dmc->disk_reads, dmc->disk_writes,
-	       dmc->cache_reads, dmc->cache_writes,
-	       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+
+#ifdef FLASHCACHE_WT_CHECKSUMS
+	if (dmc->write_around_mode == 0) {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n"	\
+		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates, 
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+	} else {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), read invalidates(%lu) write invalidates(%lu)\n"	\
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n"	\
+		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, 
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+	}
+#else  /* FLASHCACHE_WT_CHECKSUMS */
+	if (dmc->write_around_mode == 0) {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates, 
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes);
+	} else {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), read invalidates(%lu) write invalidates(%lu)\n"	\
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, 
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes);
+	}
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 }
 
 static void
@@ -1231,10 +1316,11 @@ flashcache_wt_status_table(struct cache_c *dmc, status_type_t type,
 	else 
 		cache_pct = 0;
 	DMEMIT("conf:\n"\
-	       "\tssd dev (%s), disk dev (%s)\n"                        \
+	       "\tssd dev (%s), disk dev (%s) mode (%s)\n"              \
 	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
 	       dmc->cache_devname, dmc->disk_devname,
+	       ((dmc->write_around_mode) ? "WRITE_AROUND" : "WRITETHROUGH"),
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, cache_pct);

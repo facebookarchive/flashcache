@@ -86,6 +86,8 @@ struct cache_c {
 	u_int8_t 		*cache_state;
 	u_int32_t		*set_lru_next;
 
+	int			write_around_mode;
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	struct dm_io_client *io_client; /* Client memory pool*/
 #endif
@@ -108,9 +110,13 @@ struct cache_c {
 	unsigned long wr_invalidates;	/* Number of write invalidations */
 	unsigned long rd_invalidates;	/* Number of read invalidations */
 	unsigned long cached_blocks;	/* Number of cached blocks */
+
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	unsigned long checksum_store;
 	unsigned long checksum_valid;
-	unsigned long checksum_invalid;
+	unsigned long checksum_invalid
+#endif /* FLASHCACHE_WT_CHECKSUMS */
+
 	unsigned long cache_wr_replace;
 	unsigned long uncached_reads;
 	unsigned long uncached_writes;
@@ -124,7 +130,9 @@ struct cache_c {
 /* Cache block metadata structure */
 struct cacheblock {
 	sector_t dbn;		/* Sector number of the cached block */
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	u_int64_t checksum;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 };
 
 /* Structure for a kcached job */
