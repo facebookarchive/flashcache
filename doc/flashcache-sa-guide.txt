@@ -3,15 +3,22 @@
 
 Introduction :
 ============
-Flashcache is a writeback block cache for Linux, built as a kernel module,
-using the Device Mapper. This document is a quick admministration guide 
-to flashcache.
+Flashcache is a block cache for Linux, built as a kernel module,
+using the Device Mapper. Flashcache supports writeback, writethrough
+and writearound caching modes. This document is a quick admministration
+guide to flashcache.
 
 Requirements :
 ============
-Flashcache has been built and tested on 2.6.18 and 2.6.20. If you'd like
-to build and use it on a newer kernel, please send me an email and I 
-can help. I will not support older than 2.6.18 kernels.
+Flashcache has been tested on variety of kernels between 2.6.18 and 2.6.38. 
+If you'd like to build and use it on a newer kernel, please send me an email 
+and I can help. I will not support older than 2.6.18 kernels.
+
+Cache Persistence :
+=================
+Writethru and Writearound caches are not persistent across a device removal
+or a reboot. Only Writeback caches are persistent across device removals
+and reboots.
 
 Cache creation and loading using the flashcache utilities :
 =========================================================
@@ -23,7 +30,8 @@ instead of using dmsetup.
 
 flashcache_create : Create a new flashcache volume.
 
-flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+flashcache_create -p back|around|thru [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+-p : cache mode (writeback/writethrough/writearound).
 -s : cache size. Optional. If this is not specified, the entire ssd device
      is used as cache. The default units is sectors. But you can specify 
      k/m/g as units as well.
@@ -34,22 +42,22 @@ flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_
 -f : force create. by pass checks (eg for ssd sectorsize).
 
 Examples :
-flashcache_create -s 1g -b 4k cachedev /dev/sdc /dev/sdb
-Creates a 1GB cache volume with a 4KB block size on ssd device /dev/sdc
-to cache the disk volume /dev/sdb. The name of the device created is
-"cachedev".
+flashcache_create -p back -s 1g -b 4k cachedev /dev/sdc /dev/sdb
+Creates a 1GB writeback cache volume with a 4KB block size on ssd 
+device /dev/sdc to cache the disk volume /dev/sdb. The name of the device 
+created is "cachedev".
 
-flashcache_create -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
-Same as above but units specified in sectors instead. The name of the 
-device created is "cachedev".
+flashcache_create -p thru -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
+Same as above but creates a write through cache with units specified in 
+sectors instead. The name of the device created is "cachedev".
 
-flashcache_load : Load an existing flashcache volume.
+flashcache_load : Load an existing writeback cache volume.
 
 flashcache_load cachedevname ssd_devname disk_devname
 
 Example :
 flashcache_load cachedev /dev/sdc /dev/sdb
-Load the existing cache on /dev/sdc, calling the flashcache volume
+Load the existing writeback cache on /dev/sdc, calling the flashcache volume
 cachedev.
 
 flashcache_destroy : Destroy an existing flashcache. All data will be lost !!!
@@ -62,15 +70,18 @@ Destroy the existing cache on /dev/sdc. All data is lost !!!
 
 Removing a flashcache volume :
 ============================
-Use dmsetup remove to remove a flashcache volume. Note that the 
-default behavior on a remove is to clean all dirty cacheblock to
-disk. The remove will not return until all blocks are cleaned.
-Progress on disk cleaning is reported on the console (also 
-see the "fast_remove" flashcache sysctl).
+Use dmsetup remove to remove a flashcache volume. For writeback 
+cache mode,  the default behavior on a remove is to clean all dirty 
+cache blocks to disk. The remove will not return until all blocks 
+are cleaned. Progress on disk cleaning is reported on the console 
+(also see the "fast_remove" flashcache sysctl).
 
 A reboot of the node will also result in all dirty cache blocks being
 cleaned synchronously (again see the note about "fast_remove" in the
 sysctls section).
+
+For writethrough and writearound caches, the device removal or reboot
+results in the cache being destroyed. 
 
 Example:
 dmsetup remove cachedev
@@ -89,10 +100,10 @@ dmsetup status cachedev
 dmsetup table cachedev
 
 Flashcache errors are reported in 
-/proc/flashcache_errors
+/proc/flashcache/<cache name>/flashcache_errors
 
 Flashcache stats are also reported in 
-/proc/flashcache_stats 
+/proc/flashcache/<cache name>/flashcache_stats
 for easier parseability.
 
 Cache Blocksize selection :
@@ -104,6 +115,9 @@ A 4KB cache blocksize for the vast majority of workloads (and filesystems).
 
 Cache Metadata Blocksize selection :
 ==================================
+This section only applies to the writeback cache mode. Writethrough and 
+writearound modes store no cache metadata at all.
+
 In Flashcache version 1, the metadata blocksize was fixed at 1 (512b) sector.
 Flashcache version 2 removes this limitation. In version 2, we can configure 
 a larger flashcache metadata blocksize. Version 2 maintains backwards compatibility
@@ -137,65 +151,96 @@ Thanks due to Earle Philhower of Virident for this feature !
 
 FlashCache Sysctls :
 ==================
-These sysctls will apply to all cache devices on the node.
+Flashcache sysctls operate on a per-cache device basis. A couple of examples
+first.
 
-dev.flashcache.fast_remove:
-	Don't sync dirty blocks when removing cache. On a reload
-	both DIRTY and CLEAN blocks persist in the cache. This 
-	option can be used to do a quick cache remove. 
-	CAUTION: The cache still has uncommitted (to disk) dirty
-	blocks after a fast_remove.
-dev.flashcache.zero_stats:
-	Zero out all cache stats reported by "dmsetup status".
-dev.flashcache.reclaim_policy:
+Sysctls for a Write around mode cache :
+cache device /dev/ram3, disk device /dev/ram4
+
+dev.flashcache.ram3+ram4.cache_all = 1
+dev.flashcache.ram3+ram4.zero_stats = 0
+dev.flashcache.ram3+ram4.reclaim_policy = 0
+dev.flashcache.ram3+ram4.pid_expiry_secs = 60
+dev.flashcache.ram3+ram4.max_pids = 100
+dev.flashcache.ram3+ram4.do_pid_expiry = 0
+dev.flashcache.ram3+ram4.io_latency_hist = 0
+
+Sysctls for a Write back mode cache :
+cache device /dev/sdb, disk device /dev/cciss/c0d2
+
+dev.flashcache.sdb+c0d2.fallow_delay = 900
+dev.flashcache.sdb+c0d2.fallow_clean_speed = 2
+dev.flashcache.sdb+c0d2.cache_all = 1
+dev.flashcache.sdb+c0d2.fast_remove = 0
+dev.flashcache.sdb+c0d2.zero_stats = 0
+dev.flashcache.sdb+c0d2.reclaim_policy = 0
+dev.flashcache.sdb+c0d2.pid_expiry_secs = 60
+dev.flashcache.sdb+c0d2.max_pids = 100
+dev.flashcache.sdb+c0d2.do_pid_expiry = 0
+dev.flashcache.sdb+c0d2.max_clean_ios_set = 2
+dev.flashcache.sdb+c0d2.max_clean_ios_total = 4
+dev.flashcache.sdb+c0d2.dirty_thresh_pct = 20
+dev.flashcache.sdb+c0d2.stop_sync = 0
+dev.flashcache.sdb+c0d2.do_sync = 0
+dev.flashcache.sdb+c0d2.io_latency_hist = 0
+
+Sysctls common to all cache modes :
+
+dev.flashcache.<cachedev>.cache_all:
+	Cache everything (default).
+dev.flashcache.<cachedev>.zero_stats:
+	Zero stats (once).
+dev.flashcache.<cachedev>.reclaim_policy:
 	FIFO (0) vs LRU (1). Defaults to FIFO. Can be switched at 
 	runtime.
-dev.flashcache.write_merge:
-	Enable write merging. When cleaning blocks tack on any
-	contigous blocks in the set to the ones that are being cleaned
-	Defaults to on.
-dev.flashcache.dirty_thresh_pct:
-	Flashcache will attempt to keep the dirty blocks in each set 
-	under this %. A lower dirty threshold increases disk writes, 
-	and reduces block overwrites, but increases the blocks
-	available for read caching.
-dev.flashcache.do_sync: 
-	Schedule cleaning of all dirty blocks in the cache. 
-dev.flashcache.stop_sync: 
-	Stop the sync in progress.dev.flashcache.cache_all:
-	Global caching mode to cache everything or cache nothing.
-	See section on Caching Controls. Defaults to "cache everything".
-dev.flashcache.fallow_delay:
-	In seconds. Clean dirty blocks that have been "idle" (not 
-	read or written) for fallow_delay seconds. Default is 60 
-	seconds. 
-	Setting this to 0 disables idle cleaning completely.
-dev.flashcache.fallow_clean_speed:
-	The maximum number of "fallow clean" disk writes per set 
-	per second. Defaults to 2.
-dev.flashcache.io_latency_hist:
+dev.flashcache.<cachedev>.io_latency_hist:
 	Compute IO latencies and plot these out on a histogram.
 	The scale is 250 usecs. This is disabled by default since 
 	internally flashcache uses gettimeofday() to compute latency
 	and this can get expensive depending on the clocksource used.
 	Setting this to 1 enables computation of IO latencies.
 	The IO latency histogram is appended to 'dmsetup status'.
+(There is little reason to tune these)
+dev.flashcache.<cachedev>.pid_expiry_secs:
+	Set the expiry on the pid white/black lists.
+dev.flashcache.<cachedev>.max_pids:
+	Maximum number of pids in the white/black lists.
+dev.flashcache.<cachedev>.do_pid_expiry:
+	Enable expiry on the list of pids in the white/black lists.
 
-There is little reason to change these :
+Sysctls for writeback mode only :
 
-dev.flashcache.max_clean_ios_set:
+dev.flashcache.<cachedev>.fallow_delay = 900
+	In seconds. Clean dirty blocks that have been "idle" (not 
+	read or written) for fallow_delay seconds. Default is 60 
+	seconds. 
+	Setting this to 0 disables idle cleaning completely.
+dev.flashcache.<cachedev>.fallow_clean_speed = 2
+	The maximum number of "fallow clean" disk writes per set 
+	per second. Defaults to 2.
+dev.flashcache.<cachedev>.fast_remove = 0
+	Don't sync dirty blocks when removing cache. On a reload
+	both DIRTY and CLEAN blocks persist in the cache. This 
+	option can be used to do a quick cache remove. 
+	CAUTION: The cache still has uncommitted (to disk) dirty
+	blocks after a fast_remove.
+dev.flashcache.<cachedev>.dirty_thresh_pct = 20
+	Flashcache will attempt to keep the dirty blocks in each set 
+	under this %. A lower dirty threshold increases disk writes, 
+	and reduces block overwrites, but increases the blocks
+	available for read caching.
+dev.flashcache.<cachedev>.stop_sync = 0
+	Stop the sync in progress.dev.flashcache.cache_all:
+	Global caching mode to cache everything or cache nothing.
+	See section on Caching Controls. Defaults to "cache everything".
+dev.flashcache.<cachedev>.do_sync = 0
+	Schedule cleaning of all dirty blocks in the cache. 
+(There is little reason to tune these)
+dev.flashcache.<cachedev>.max_clean_ios_set = 2
 	Maximum writes that can be issues per set when cleaning
 	blocks.
-dev.flashcache.max_clean_ios_total:
+dev.flashcache.<cachedev>.max_clean_ios_total = 4
 	Maximum writes that can be issued when syncing all blocks.
-dev.flashcache.debug:
-	Enable verbose debugging.
-dev.flashcache.do_pid_expiry:
-	Enable expiry on the list of pids in the white/black lists.
-dev.flashcache.pid_expiry_secs:
-	Set the expiry on the pid white/black lists.
-dev.flashcache.max_pids:
-	Maximum number of pids in the white/black lists.
 
 Using dmsetup to create and load flashcache volumes :
 ===================================================
@@ -211,7 +256,12 @@ table_file : other cache args (format below). If this is omitted, dmsetup
 	     attempts to read this from stdin.
 
 table_file format :
-0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+
+cache mode:
+	   1: Write Back
+	   2: Write Through
+	   3: Write Around
 
 flashcache cmd: 
 	   1: load existing cache
@@ -236,9 +286,9 @@ cache set size:
 
 Example :
 
-echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 2 8 522000000 | dmsetup create cachedev
+echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 1 2 8 522000000 | dmsetup create cachedev
 
-This creates a cache device called "cachedev" (/dev/mapper/cachedev)
+This creates a writeback cache device called "cachedev" (/dev/mapper/cachedev)
 with a 4KB blocksize to cache /dev/cciss/c0d1p2 on /dev/fioa2.
 The size of the cache is 522000000 sectors.
 

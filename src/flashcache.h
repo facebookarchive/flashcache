@@ -206,7 +206,10 @@ struct cache_c {
 	unsigned int block_size;	/* Cache block size */
 	unsigned int block_shift;	/* Cache block size in bits */
 	unsigned int block_mask;	/* Cache block mask */
-	unsigned int consecutive_shift;	/* Consecutive blocks size in bits */
+	unsigned int assoc_shift;	/* Consecutive blocks size in bits */
+	unsigned int num_sets;		/* Number of cache sets */
+	
+	int	cache_mode;
 
 	wait_queue_head_t destroyq;	/* Wait queue for I/O completion */
 	/* XXX - Updates of nr_jobs should happen inside the lock. But doing it outside
@@ -258,8 +261,27 @@ struct cache_c {
 	
 	struct cache_c	*next_cache;
 
+	void *sysctl_handle;
+
 	char cache_devname[DEV_PATHLEN];
 	char disk_devname[DEV_PATHLEN];
+
+	/* Per device sysctls */
+	int sysctl_io_latency_hist;
+	int sysctl_do_sync;
+	int sysctl_stop_sync;
+	int sysctl_dirty_thresh;
+	int sysctl_pid_do_expiry;
+	int sysctl_max_pids;
+	int sysctl_pid_expiry_secs;
+	int sysctl_reclaim_policy;
+	int sysctl_zerostats;
+	int sysctl_error_inject;
+	int sysctl_fast_remove;
+	int sysctl_cache_all;
+	int sysctl_fallow_clean_speed;
+	int sysctl_fallow_clean_speed_new;
+	int sysctl_fallow_delay;
 };
 
 /* kcached/pending job states */
@@ -275,13 +297,15 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
+	struct job_io_regions {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-	struct io_region disk;
-	struct io_region cache;
+		struct io_region disk;
+		struct io_region cache;
 #else
-	struct dm_io_region disk;
-	struct dm_io_region cache;
+		struct dm_io_region disk;
+		struct dm_io_region cache;
 #endif
+	} job_io_regions;
 	int    index;
 	int    action;
 	int 	error;
@@ -298,6 +322,13 @@ struct pending_job {
 	struct pending_job *prev, *next;
 };
 #endif /* __KERNEL__ */
+
+/* Cache Modes */
+enum {
+	FLASHCACHE_WRITE_BACK=1,
+	FLASHCACHE_WRITE_THROUGH=2,
+	FLASHCACHE_WRITE_AROUND=3,
+};
 
 /* States of a cache block */
 #define INVALID			0x0001
@@ -409,9 +440,19 @@ struct cache_md_block_head {
 
 #define MIN_JOBS 1024
 
+/* Default values for sysctls */
 #define DIRTY_THRESH_MIN	10
 #define DIRTY_THRESH_MAX	90
 #define DIRTY_THRESH_DEF	20
+
+#define MAX_CLEAN_IOS_SET	2
+#define MAX_CLEAN_IOS_TOTAL	4
+#define MAX_PIDS		100
+#define PID_EXPIRY_SECS		60
+#define FALLOW_DELAY		(60*15) /* 15 Mins default */
+#define FALLOW_SPEED_MIN	1
+#define FALLOW_SPEED_MAX	100
+#define FALLOW_CLEAN_SPEED	2
 
 /* DM async IO mempool sizing */
 #define FLASHCACHE_ASYNC_SIZE 1024
@@ -532,6 +573,12 @@ void flashcache_clear_fallow(struct cache_c *dmc, int index);
 
 void flashcache_bio_endio(struct bio *bio, int error, 
 			  struct cache_c *dmc, struct timeval *io_start_time);
+
+/* procfs */
+void flashcache_module_procfs_init(void);
+void flashcache_module_procfs_releae(void);
+void flashcache_ctr_procfs(struct cache_c *dmc);
+void flashcache_dtr_procfs(struct cache_c *dmc);
 
 #endif /* __KERNEL__ */
 

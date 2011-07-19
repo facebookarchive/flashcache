@@ -101,7 +101,8 @@ main(int argc, char **argv)
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t disk_devsize, cache_devsize;
 	int ret;
-
+	int cache_mode;
+	
 	pname = argv[0];
 	while ((c = getopt(argc, argv, "v")) != -1) {
 		switch (c) {
@@ -176,8 +177,9 @@ main(int argc, char **argv)
 	 * Go ahead and load the cache.
 	 * XXX - Should use the device mapper library for this.
 	 */
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s 1 | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cachedev);
+	cache_mode = FLASHCACHE_WRITE_BACK;
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %d 1 | dmsetup create %s",
+		disk_devsize, disk_devname, ssd_devname, cache_mode, cachedev);
 	load_module();
 	if (verbose)
 		fprintf(stderr, "Loading FlashCache Volume : %s\n", dmsetup_cmd);

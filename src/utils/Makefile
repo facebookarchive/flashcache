@@ -1,5 +1,5 @@
 COMMIT_REV ?= $(shell git describe  --always --abbrev=12)
-CFLAGS += -I.. -I. -DCOMMIT_REV="\"$(COMMIT_REV)\""
+CFLAGS += -I.. -I. -DCOMMIT_REV="\"$(COMMIT_REV)\"" -g
 PROGRAMS += flashcache_create flashcache_destroy flashcache_load
 INSTALL_DIR = /sbin/
 

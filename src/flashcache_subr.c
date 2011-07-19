@@ -379,8 +379,6 @@ do_work(struct work_struct *unused)
 	process_jobs(&_uncached_io_complete_jobs, flashcache_uncached_io_complete);
 }
 
-extern int sysctl_flashcache_lat_hist;
-
 struct kcached_job *
 new_kcached_job(struct cache_c *dmc, struct bio* bio, int index)
 {
@@ -393,24 +391,24 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio, int index)
 	}
 	job->dmc = dmc;
 	job->index = index;
-	job->cache.bdev = dmc->cache_dev->bdev;
+	job->job_io_regions.cache.bdev = dmc->cache_dev->bdev;
 	if (index != -1) {
-		job->cache.sector = INDEX_TO_CACHE_ADDR(dmc, index);
-		job->cache.count = dmc->block_size;	
+		job->job_io_regions.cache.sector = INDEX_TO_CACHE_ADDR(dmc, index);
+		job->job_io_regions.cache.count = dmc->block_size;	
 	}
 	job->error = 0;	
 	job->bio = bio;
-	job->disk.bdev = dmc->disk_dev->bdev;
+	job->job_io_regions.disk.bdev = dmc->disk_dev->bdev;
 	if (index != -1) {
-		job->disk.sector = dmc->cache[index].dbn;
-		job->disk.count = dmc->block_size;
+		job->job_io_regions.disk.sector = dmc->cache[index].dbn;
+		job->job_io_regions.disk.count = dmc->block_size;
 	} else {
-		job->disk.sector = bio->bi_sector;
-		job->disk.count = to_sector(bio->bi_size);
+		job->job_io_regions.disk.sector = bio->bi_sector;
+		job->job_io_regions.disk.count = to_sector(bio->bi_size);
 	}
 	job->next = NULL;
 	job->md_block = NULL;
-	if (sysctl_flashcache_lat_hist)
+	if (dmc->sysctl_io_latency_hist)
 		do_gettimeofday(&job->io_start_time);
 	else {
 		job->io_start_time.tv_sec = 0;
@@ -442,7 +440,7 @@ void
 flashcache_bio_endio(struct bio *bio, int error, 
 		     struct cache_c *dmc, struct timeval *start_time)
 {
-	if (unlikely(sysctl_flashcache_lat_hist && 
+	if (unlikely(dmc->sysctl_io_latency_hist && 
 		     start_time != NULL && 
 		     start_time->tv_sec != 0))
 		flashcache_record_latency(dmc, start_time);
@@ -505,8 +503,6 @@ swap_dbn_index_pair(void *a, void *b, int size)
 	*(struct dbn_index_pair *)b = temp;
 }
 
-extern int sysctl_flashcache_write_merge;
-
 /* 
  * We have a list of blocks to write out to disk.
  * 1) Sort the blocks by dbn.
@@ -531,8 +527,7 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 		return;
 	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
 	     cmp_dbn, swap_dbn_index_pair);
-	if (sysctl_flashcache_write_merge == 0)
-		return;
+
 	set_dirty_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_ATOMIC);
 	if (set_dirty_list == NULL) {
 		dmc->flashcache_errors.memory_alloc_errors++;

@@ -41,7 +41,9 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
+		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
 		pname);
 #ifdef COMMIT_REV
@@ -147,7 +149,7 @@ load_module(void)
 		}
 	} else if (verbose)
 			fprintf(stderr, "Flashcache Module already loaded\n");
-	fp = fopen("/proc/flashcache_version", "ro");
+	fp = fopen("/proc/flashcache/flashcache_version", "ro");
 	fgets(line, 8190, fp);
 	if (fgets(line, 8190, fp)) {
 		if (verbose)
@@ -172,9 +174,11 @@ main(int argc, char **argv)
 	int cache_sectorsize;
 	int associativity = 512;
 	int ret;
-
+	int cache_mode = -1;
+	char *cache_mode_str;
+	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:m:va:")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:m:va:p:")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
@@ -196,10 +200,25 @@ main(int argc, char **argv)
 		case 'f':
 			force = 1;
                         break;
+		case 'p':
+			if (strcmp(optarg, "back") == 0) {
+				cache_mode = FLASHCACHE_WRITE_BACK;
+				cache_mode_str = "WRITE_BACK";
+			} else if (strcmp(optarg, "thru") == 0) {
+				cache_mode = FLASHCACHE_WRITE_THROUGH;
+				cache_mode_str = "WRITE_THROUGH";
+			} else if (strcmp(optarg, "around") == 0) {
+				cache_mode = FLASHCACHE_WRITE_AROUND;
+				cache_mode_str = "WRITE_AROUND";
+			} else
+				usage(pname);
+                        break;			
 		case '?':
 			usage(pname);
 		}
 	}
+	if (cache_mode == -1)
+		usage(pname);
 	if (optind == argc)
 		usage(pname);
 	if (block_size == 0)
@@ -213,9 +232,14 @@ main(int argc, char **argv)
 	if (optind == argc)
 		usage(pname);
 	disk_devname = argv[optind];
-	printf("cachedev %s, ssd_devname %s, disk_devname %s\n", 
-	       cachedev, ssd_devname, disk_devname);
-	printf("block_size %lu, md_block_size %lu, cache_size %lu\n", block_size, md_block_size, cache_size);
+	printf("cachedev %s, ssd_devname %s, disk_devname %s cache mode %s\n", 
+	       cachedev, ssd_devname, disk_devname, cache_mode_str);
+	if (cache_mode == FLASHCACHE_WRITE_BACK)
+		printf("block_size %lu, md_block_size %lu, cache_size %lu\n", 
+		       block_size, md_block_size, cache_size);
+	else
+		printf("block_size %lu, cache_size %lu\n", 
+		       block_size, cache_size);
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -282,9 +306,9 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s 2 %lu %lu %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %d 2 %lu %lu %lu %lu"
 		" | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, block_size, 
+		disk_devsize, disk_devname, ssd_devname, cache_mode, block_size, 
 		cache_size, associativity, md_block_size, 
 		cachedev);
 

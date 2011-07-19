@@ -55,10 +55,6 @@
 #include "flashcache.h"
 #include "flashcache_ioctl.h"
 
-extern int sysctl_flashcache_max_pids;
-extern int sysctl_pid_expiry_check;
-extern int sysctl_cache_all;
-
 static int flashcache_find_pid_locked(struct cache_c *dmc, pid_t pid, 
 				      int which_list);
 static void flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, 
@@ -83,14 +79,14 @@ static void
 flashcache_drop_pids(struct cache_c *dmc, int which_list)
 {
 	if (which_list == FLASHCACHE_WHITELIST) {
-		while (dmc->num_whitelist_pids >= sysctl_flashcache_max_pids) {
+		while (dmc->num_whitelist_pids >= dmc->sysctl_max_pids) {
 			VERIFY(dmc->whitelist_head != NULL);
 			flashcache_del_pid_locked(dmc, dmc->whitelist_tail->pid,
 						  which_list);
 			dmc->flashcache_stats.pid_drops++;
 		}
 	} else {
-		while (dmc->num_blacklist_pids >= sysctl_flashcache_max_pids) {
+		while (dmc->num_blacklist_pids >= dmc->sysctl_max_pids) {
 			VERIFY(dmc->blacklist_head != NULL);
 			flashcache_del_pid_locked(dmc, dmc->blacklist_tail->pid,
 						  which_list);
@@ -108,13 +104,13 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
-	new->expiry = jiffies + sysctl_pid_expiry_check * HZ;
+	new->expiry = jiffies + dmc->sysctl_pid_expiry_secs * HZ;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	if (which_list == FLASHCACHE_WHITELIST) {
-		if (dmc->num_whitelist_pids > sysctl_flashcache_max_pids)
+		if (dmc->num_whitelist_pids > dmc->sysctl_max_pids)
 			flashcache_drop_pids(dmc, which_list);
 	} else {
-		if (dmc->num_blacklist_pids > sysctl_flashcache_max_pids)
+		if (dmc->num_blacklist_pids > dmc->sysctl_max_pids)
 			flashcache_drop_pids(dmc, which_list);		
 	}
 	if (flashcache_find_pid_locked(dmc, pid, which_list) == 0) {
@@ -145,7 +141,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 		/* When adding the first entry to list, set expiry check timeout */
 		if (*head == new)
 			dmc->pid_expire_check = 
-				jiffies + ((sysctl_pid_expiry_check + 1) * HZ);
+				jiffies + ((dmc->sysctl_pid_expiry_secs + 1) * HZ);
 	} else
 		kfree(new);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
@@ -297,7 +293,7 @@ flashcache_pid_expiry_all_locked(struct cache_c *dmc)
 		return;
 	flashcache_pid_expiry_list_locked(dmc, FLASHCACHE_WHITELIST);
 	flashcache_pid_expiry_list_locked(dmc, FLASHCACHE_BLACKLIST);
-	dmc->pid_expire_check = jiffies + (sysctl_pid_expiry_check + 1) * HZ;
+	dmc->pid_expire_check = jiffies + (dmc->sysctl_pid_expiry_secs + 1) * HZ;
 }
 
 /*
@@ -315,7 +311,7 @@ flashcache_uncacheable(struct cache_c *dmc)
 {
 	int dontcache;
 	
-	if (sysctl_cache_all) {
+	if (dmc->sysctl_cache_all) {
 		/* If the tid has been blacklisted, we don't cache at all.
 		   This overrides everything else */
 		dontcache = flashcache_find_pid_locked(dmc, current->pid, 
