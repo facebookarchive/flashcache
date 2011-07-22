@@ -473,15 +473,16 @@ hash_block(struct cache_c *dmc, sector_t dbn)
 
 static void
 find_valid_dbn(struct cache_c *dmc, sector_t dbn, 
-	       int start_index, int *index)
+	       int start_index, int *valid, int *invalid)
 {
 	int i;
 	int end_index = start_index + dmc->assoc;
 
+	*valid = *invalid = -1;
 	for (i = start_index ; i < end_index ; i++) {
 		if (dbn == dmc->cache[i].dbn &&
 		    (dmc->cache[i].cache_state & VALID)) {
-			*index = i;
+			*valid = i;
 			if (dmc->sysctl_reclaim_policy == FLASHCACHE_LRU &&
 			    ((dmc->cache[i].cache_state & BLOCK_IO_INPROG) == 0))
 				flashcache_reclaim_lru_movetail(dmc, i);
@@ -492,26 +493,14 @@ find_valid_dbn(struct cache_c *dmc, sector_t dbn,
 			flashcache_clear_fallow(dmc, i);
 			return;
 		}
-	}
-	*index = -1;
-}
-
-static int
-find_invalid_dbn(struct cache_c *dmc, int start_index)
-{
-	int i;
-	int end_index = start_index + dmc->assoc;
-	
-	/* Find INVALID slot that we can reuse */
-	for (i = start_index ; i < end_index ; i++) {
-		if (dmc->cache[i].cache_state == INVALID) {
-			if (dmc->sysctl_reclaim_policy == FLASHCACHE_LRU)
-				flashcache_reclaim_lru_movetail(dmc, i);
+		if (*invalid == -1 && dmc->cache[i].cache_state == INVALID) {
 			VERIFY((dmc->cache[i].cache_state & FALLOW_DOCLEAN) == 0);
-			return i;
+			*invalid = i;
 		}
 	}
-	return -1;
+	if (*valid == -1 && *invalid != -1)
+		if (dmc->sysctl_reclaim_policy == FLASHCACHE_LRU)
+			flashcache_reclaim_lru_movetail(dmc, *invalid);
 }
 
 /* Search for a slot that we can reclaim */
@@ -581,14 +570,13 @@ flashcache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 	start_index = dmc->assoc * set_number;
 	DPRINTK("Cache lookup : dbn %llu(%lu), set = %d",
 		dbn, io_size, set_number);
-	find_valid_dbn(dmc, dbn, start_index, index);
-	if (*index > 0) {
+	find_valid_dbn(dmc, dbn, start_index, index, &invalid);
+	if (*index >= 0) {
 		DPRINTK("Cache lookup HIT: Block %llu(%lu): VALID index %d",
 			     dbn, io_size, *index);
 		/* We found the exact range of blocks we are looking for */
 		return VALID;
 	}
-	invalid = find_invalid_dbn(dmc, start_index);
 	if (invalid == -1) {
 		/* We didn't find an invalid entry, search for oldest valid entry */
 		find_reclaim_dbn(dmc, start_index, &oldest_clean);
