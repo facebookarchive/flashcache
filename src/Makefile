@@ -4,6 +4,9 @@ KERNEL_TREE ?= /lib/modules/$(KERNEL_SOURCE_VERSION)/build
 
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux 
+ifneq ($(filter ALLOW_DM_IO_GET_FAILURES,$(FEATURES)),)
+EXTRA_CFLAGS += -DALLOW_DM_IO_GET_FAILURES
+endif
 
 obj-m += flashcache.o
 flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o flashcache_procfs.o

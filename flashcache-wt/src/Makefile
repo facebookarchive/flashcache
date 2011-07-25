@@ -1,5 +1,8 @@
 EXTRA_CFLAGS=-I$(KERNEL_TREE)/drivers/md -I./
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux
+ifneq ($(filter ALLOW_DM_IO_GET_FAILURES,$(FEATURES)),)
+EXTRA_CFLAGS += -DALLOW_DM_IO_GET_FAILURES
+endif
 UTILS_CFLAGS=-I./
 
 obj-m += flashcache-wt.o
