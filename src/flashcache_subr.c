@@ -630,6 +630,10 @@ out:
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 int 
 flashcache_dm_io_async_vm(struct cache_c *dmc, unsigned int num_regions, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
@@ -649,7 +653,7 @@ flashcache_dm_io_async_vm(struct cache_c *dmc, unsigned int num_regions,
 		.mem.offset = 0,
 		.notify.fn = fn,
 		.notify.context = context,
-		.client = dmc->io_client,
+		.client = flashcache_io_client,
 	};
 
 	error = dm_io(&io_req, 1, where, &error_bits);
@@ -736,7 +740,7 @@ flashcache_dm_io_sync_vm(struct cache_c *dmc, struct dm_io_region *where, int rw
 		.mem.ptr.vma = data,
 		.mem.offset = 0,
 		.notify.fn = NULL,
-		.client = dmc->io_client,
+		.client = flashcache_io_client,
 	};
 
 	error = dm_io(&io_req, 1, where, &error_bits);

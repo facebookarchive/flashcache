@@ -171,29 +171,10 @@ flashcache_jobs_exit(void)
 static int 
 flashcache_kcached_init(struct cache_c *dmc)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	int r;
-
-	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
-	if (r) {
-		DMERR("flashcache_kcached_init: Could not resize dm io pool");
-		return r;
-	}
-#endif
 	init_waitqueue_head(&dmc->destroyq);
 	atomic_set(&dmc->nr_jobs, 0);
 	atomic_set(&dmc->remove_in_prog, 0);
 	return 0;
-}
-
-static void
-flashcache_kcached_client_destroy(struct cache_c *dmc)
-{
-	/* Wait for all IOs */
-	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));	
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	dm_io_put(FLASHCACHE_ASYNC_SIZE);
-#endif
 }
 
 /*
@@ -933,60 +914,23 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad2;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22) \
-	&& LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-	dmc->io_client = dm_io_client_create();
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)	
-	if (IS_ERR(dmc->io_client)) {
-		r = PTR_ERR(dmc->io_client);
-		ti->error = "Failed to create io client\n";
-		goto bad3;
-	}
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
-	if (r) {
-		ti->error = "Failed to initialize kcopyd client\n";
-		goto bad3;
-	}
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26) \
-	&& LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
-	r = dm_kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
-	dmc->kcp_client = dm_kcopyd_client_create();
-	if((r = IS_ERR(dmc->kcp_client))) {
-		r = PTR_ERR(dmc->kcp_client);
-	}
-#else
-	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
-#endif
-	if (r) {
-		ti->error = "Failed to initialize kcopyd client\n";
-		dm_io_client_destroy(dmc->io_client);
-		goto bad3;
-	}
-
 	r = flashcache_kcached_init(dmc);
 	if (r) {
 		ti->error = "Failed to initialize kcached";
-		goto bad4;
+		goto bad3;
 	}
 
 	if (sscanf(argv[2], "%u", &dmc->cache_mode) != 1) {
 		ti->error = "flashcache: sscanf failed, invalid cache mode";
 		r = -EINVAL;
-		goto bad5;
+		goto bad3;
 	}
 	if (dmc->cache_mode < FLASHCACHE_WRITE_BACK || 
 	    dmc->cache_mode > FLASHCACHE_WRITE_AROUND) {
 		DMERR("cache_mode = %d", dmc->cache_mode);
 		ti->error = "flashcache: Invalid cache mode";
 		r = -EINVAL;
-		goto bad5;
+		goto bad3;
 	}
 	
 	/* 
@@ -998,20 +942,20 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			if (sscanf(argv[3], "%u", &persistence) != 1) {
 				ti->error = "flashcache: sscanf failed, invalid cache persistence";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 			if (persistence < CACHE_RELOAD || persistence > CACHE_FORCECREATE) {
 				DMERR("persistence = %d", persistence);
 				ti->error = "flashcache: Invalid cache persistence";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}			
 		}
 		if (persistence == CACHE_RELOAD) {
 			if (flashcache_writeback_load(dmc)) {
 				ti->error = "flashcache: Cache reload failed";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 			goto init; /* Skip reading cache parameters from command line */
 		}
@@ -1022,12 +966,12 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		if (sscanf(argv[4], "%u", &dmc->block_size) != 1) {
 			ti->error = "flashcache: Invalid block size";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 		if (!dmc->block_size || (dmc->block_size & (dmc->block_size - 1))) {
 			ti->error = "flashcache: Invalid block size";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 	}
 	
@@ -1041,7 +985,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		if (sscanf(argv[5], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache: Invalid cache size";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 	}
 	
@@ -1052,7 +996,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		if (sscanf(argv[6], "%u", &dmc->assoc) != 1) {
 			ti->error = "flashcache: Invalid cache associativity";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 		if (!dmc->assoc || (dmc->assoc & (dmc->assoc - 1)) ||
 		    dmc->assoc > FLASHCACHE_MAX_ASSOC ||
@@ -1060,7 +1004,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		    dmc->size < dmc->assoc) {
 			ti->error = "flashcache: Invalid cache associativity";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 	}
 
@@ -1073,19 +1017,19 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			if (sscanf(argv[7], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 			if (!dmc->md_block_size || (dmc->md_block_size & (dmc->md_block_size - 1)) ||
 			    dmc->md_block_size > FLASHCACHE_MAX_MD_BLOCK_SIZE) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 			if (dmc->assoc < 
 			    (dmc->md_block_size * 512 / sizeof(struct flash_cacheblock))) {
 				ti->error = "flashcache: Please choose a smaller metadata block size or larger assoc";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 		}
 
@@ -1095,7 +1039,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		if (dmc->md_block_size * 512 < dmc->cache_dev->bdev->bd_block_size) {
 			ti->error = "flashcache: Metadata block size must be >= cache device sector size";
 			r = -EINVAL;
-			goto bad5;
+			goto bad3;
 		}
 	}
 
@@ -1104,13 +1048,13 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			if (flashcache_writeback_create(dmc, 0)) {
 				ti->error = "flashcache: Cache Create Failed";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 		} else {
 			if (flashcache_writeback_create(dmc, 1)) {
 				ti->error = "flashcache: Cache Force Create Failed";
 				r = -EINVAL;
-				goto bad5;
+				goto bad3;
 			}
 		}
 	} else
@@ -1124,7 +1068,7 @@ init:
 		ti->error = "Unable to allocate memory";
 		r = -ENOMEM;
 		vfree((void *)dmc->cache);
-		goto bad5;
+		goto bad3;
 	}				
 
 	for (i = 0 ; i < dmc->num_sets ; i++) {
@@ -1154,7 +1098,7 @@ init:
 			r = -ENOMEM;
 			vfree((void *)dmc->cache);
 			vfree((void *)dmc->cache_sets);
-			goto bad5;
+			goto bad3;
 		}		
 
 		for (i = 0 ; i < dmc->md_blocks - 1 ; i++) {
@@ -1225,17 +1169,6 @@ init:
 
 	return 0;
 
-bad5:
-	flashcache_kcached_client_destroy(dmc);
-bad4:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-	dm_kcopyd_client_destroy(dmc->kcp_client);
-#else
-	kcopyd_client_destroy(dmc->kcp_client);
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
-	dm_io_client_destroy(dmc->io_client);
-#endif
 bad3:
 	dm_put_device(ti, dmc->cache_dev);
 bad2:
@@ -1456,9 +1389,6 @@ flashcache_dtr(struct dm_target *ti)
 		flashcache_sync_for_remove(dmc);
 		flashcache_writeback_md_store(dmc);
 	}
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
-	dm_io_put(FLASHCACHE_ASYNC_SIZE); /* Must be done after md_store() */
-#endif
 	if (!dmc->sysctl_fast_remove && dmc->nr_dirty > 0)
 		DMERR("Could not sync %d blocks to disk, cache still dirty", 
 		      dmc->nr_dirty);
@@ -1467,20 +1397,12 @@ flashcache_dtr(struct dm_target *ti)
 	for (i = 0 ; i < dmc->size ; i++)
 		nr_queued += dmc->cache[i].nr_queued;
 	DMINFO("cache queued jobs %d", nr_queued);	
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-	kcopyd_client_destroy(dmc->kcp_client);
-#else
-	dm_kcopyd_client_destroy(dmc->kcp_client);
-#endif
 	flashcache_dtr_stats_print(dmc);
 
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_sets);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
 		vfree((void *)dmc->md_blocks_buf);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
-	dm_io_client_destroy(dmc->io_client);
-#endif
 	flashcache_del_all_pids(dmc, FLASHCACHE_WHITELIST, 1);
 	flashcache_del_all_pids(dmc, FLASHCACHE_BLACKLIST, 1);
 	VERIFY(dmc->num_whitelist_pids == 0);
@@ -1835,6 +1757,16 @@ static struct notifier_block flashcache_notifier = {
 	.priority	= INT_MAX, /* should be > ssd pri's and disk dev pri's */
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+struct dm_kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing back data */
+#else
+struct kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing back data */
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+struct dm_io_client *flashcache_io_client; /* Client memory pool*/
+#endif
+
 /*
  * Initiate a cache target.
  */
@@ -1848,6 +1780,48 @@ flashcache_init(void)
 		return r;
 	atomic_set(&nr_cache_jobs, 0);
 	atomic_set(&nr_pending_jobs, 0);
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
+	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
+	if (r) {
+		DMERR("flashcache_init: Could not size dm io pool");
+		return r;
+	}
+	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
+	if (r) {
+		DMERR("flashcache_init: Failed to initialize kcopyd client");
+		dm_io_put(FLASHCACHE_ASYNC_SIZE);
+		return r;
+	}
+#else /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22) */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
+	flashcache_io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
+#else
+	flashcache_io_client = dm_io_client_create();
+#endif
+	if (IS_ERR(flashcache_io_client)) {
+		DMERR("flashcache_init: Failed to initialize DM IO client");
+		return r;
+	}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	flashcache_kcp_client = dm_kcopyd_client_create();
+	if ((r = IS_ERR(dmc->kcp_client))) {
+		r = PTR_ERR(dmc->kcp_client);
+	}
+#else /* .26 <= VERSION < 3.0.0 */
+	r = dm_kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
+#endif /* .26 <= VERSION < 3.0.0 */
+
+	if (r) {
+		dm_io_client_destroy(flashcache_io_client);
+		DMERR("flashcache_init: Failed to initialize kcopyd client");
+		return r;
+	}
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22) */
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 	INIT_WORK(&_kcached_wq, do_work, NULL);
 #else
@@ -1883,6 +1857,16 @@ flashcache_exit(void)
 		DMERR("cache: unregister failed %d", r);
 #else
 	dm_unregister_target(&flashcache_target);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+	kcopyd_client_destroy(flashcache_kcp_client);
+#else
+	dm_kcopyd_client_destroy(flashcache_kcp_client);
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+	dm_io_client_destroy(flashcache_io_client);
+#else
+	dm_io_put(FLASHCACHE_ASYNC_SIZE);
 #endif
 	unregister_reboot_notifier(&flashcache_notifier);
 	flashcache_jobs_exit();

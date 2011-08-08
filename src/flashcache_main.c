@@ -89,6 +89,16 @@ static void flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio);
 extern struct work_struct _kcached_wq;
 extern u_int64_t size_hist[];
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+extern struct dm_kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing back data */
+#else
+extern struct kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing back data */
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 int dm_io_async_bvec(unsigned int num_regions, 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
@@ -100,8 +110,6 @@ int dm_io_async_bvec(unsigned int num_regions,
 			    struct bio_vec *bvec, io_notify_fn fn, 
 			    void *context)
 {
-	struct kcached_job *job = (struct kcached_job *)context;
-	struct cache_c *dmc = job->dmc;
 	struct dm_io_request iorq;
 
 	iorq.bi_rw = rw;
@@ -109,7 +117,7 @@ int dm_io_async_bvec(unsigned int num_regions,
 	iorq.mem.ptr.bvec = bvec;
 	iorq.notify.fn = fn;
 	iorq.notify.context = context;
-	iorq.client = dmc->io_client;
+	iorq.client = flashcache_io_client;
 	return dm_io(&iorq, num_regions, where, NULL);
 }
 #endif
@@ -1005,7 +1013,7 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		dmc->flashcache_stats.ssd_reads++;
 		dmc->flashcache_stats.disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-		kcopyd_copy(dmc->kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
+		kcopyd_copy(flashcache_kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
 			    flashcache_kcopyd_callback, 
 #else
@@ -1013,7 +1021,7 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 #endif
 			    job);
 #else
-		dm_kcopyd_copy(dmc->kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
+		dm_kcopyd_copy(flashcache_kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
 			       (dm_kcopyd_notify_fn) flashcache_kcopyd_callback, 
 			       (void *)job);
 #endif
@@ -1820,7 +1828,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		dmc->flashcache_stats.ssd_reads++;
 		dmc->flashcache_stats.disk_writes++;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-		kcopyd_copy(dmc->kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
+		kcopyd_copy(flashcache_kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
 			    flashcache_kcopyd_callback_sync,
 #else
@@ -1828,7 +1836,7 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 #endif
 			    job);
 #else
-		dm_kcopyd_copy(dmc->kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
+		dm_kcopyd_copy(flashcache_kcp_client, &job->job_io_regions.cache, 1, &job->job_io_regions.disk, 0, 
 			       (dm_kcopyd_notify_fn)flashcache_kcopyd_callback_sync, 
 			       (void *)job);
 #endif

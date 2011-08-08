@@ -182,15 +182,6 @@ struct cache_c {
 	struct dm_dev 		*disk_dev;   /* Source device */
 	struct dm_dev 		*cache_dev; /* Cache device */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-	struct dm_kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
-#else
-	struct kcopyd_client *kcp_client; /* Kcopyd client for writing back data */
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
-	struct dm_io_client *io_client; /* Client memory pool*/
-#endif
-
 	int 			on_ssd_version;
 	
 	spinlock_t		cache_spin_lock;
