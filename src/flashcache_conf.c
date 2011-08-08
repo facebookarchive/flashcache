@@ -933,8 +933,13 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad2;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22) \
+	&& LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
 	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	dmc->io_client = dm_io_client_create();
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)	
 	if (IS_ERR(dmc->io_client)) {
 		r = PTR_ERR(dmc->io_client);
 		ti->error = "Failed to create io client\n";
@@ -948,9 +953,14 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		ti->error = "Failed to initialize kcopyd client\n";
 		goto bad3;
 	}
-#else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26) \
+	&& LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
 	r = dm_kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	dmc->kcp_client = dm_kcopyd_client_create();
+	if((r = IS_ERR(dmc->kcp_client))) {
+		r = PTR_ERR(dmc->kcp_client);
+	}
 #else
 	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &dmc->kcp_client);
 #endif
@@ -959,7 +969,6 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dm_io_client_destroy(dmc->io_client);
 		goto bad3;
 	}
-#endif
 
 	r = flashcache_kcached_init(dmc);
 	if (r) {
