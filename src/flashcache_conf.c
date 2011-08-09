@@ -1808,8 +1808,8 @@ flashcache_init(void)
 	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 	flashcache_kcp_client = dm_kcopyd_client_create();
-	if ((r = IS_ERR(dmc->kcp_client))) {
-		r = PTR_ERR(dmc->kcp_client);
+	if ((r = IS_ERR(flashcache_kcp_client))) {
+		r = PTR_ERR(flashcache_kcp_client);
 	}
 #else /* .26 <= VERSION < 3.0.0 */
 	r = dm_kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
