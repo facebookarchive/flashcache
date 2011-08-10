@@ -41,6 +41,7 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/list.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #include "dm.h"
@@ -59,7 +60,8 @@
 #include "flashcache.h"
 #include "flashcache_ioctl.h"
 
-struct cache_c *cache_list_head = NULL;
+LIST_HEAD(cache_list_head);
+
 struct work_struct _kcached_wq;
 u_int64_t size_hist[33];
 
@@ -1138,8 +1140,7 @@ init:
 	
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, TASK_UNINTERRUPTIBLE);
-	dmc->next_cache = cache_list_head;
-	cache_list_head = dmc;
+	list_add(&dmc->cache_list, &cache_list_head);
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
 	smp_mb__after_clear_bit();
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
@@ -1379,10 +1380,8 @@ void
 flashcache_dtr(struct dm_target *ti)
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
-	struct cache_c **nodepp;
 	int i;
 	int nr_queued = 0;
-
 	flashcache_dtr_procfs(dmc);
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
@@ -1413,14 +1412,7 @@ flashcache_dtr(struct dm_target *ti)
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
 			       TASK_UNINTERRUPTIBLE);
-	nodepp = &cache_list_head;
-	while (*nodepp != NULL) {
-		if (*nodepp == dmc) {
-			*nodepp = dmc->next_cache;
-			break;
-		}
-		nodepp = &((*nodepp)->next_cache);
-	}
+	list_del(&dmc->cache_list);
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
 	smp_mb__after_clear_bit();
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
@@ -1722,15 +1714,13 @@ static int
 flashcache_notify_reboot(struct notifier_block *this,
 			 unsigned long code, void *x)
 {
-	struct cache_c *dmc;
-
+	struct cache_c *dmc = NULL;
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
 			       TASK_UNINTERRUPTIBLE);
-	for (dmc = cache_list_head ; 
-	     dmc != NULL ; 
-	     dmc = dmc->next_cache) {
+
+	list_for_each_entry(dmc, &cache_list_head, cache_list) {
 		if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 			flashcache_sync_for_remove(dmc);
 			flashcache_writeback_md_store(dmc);
