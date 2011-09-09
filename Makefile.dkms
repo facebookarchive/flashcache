@@ -1,0 +1,44 @@
+COMMIT_REV := $(shell git describe  --always --abbrev=12)
+DKMS_DEST ?= /var/lib/dkms/flashcache/$(COMMIT_REV)/source
+# statically link for inclusion in initramfs
+CFLAGS += -static
+export COMMIT_REV CFLAGS
+
+UTILS := /sbin/flashcache_load /sbin/flashcache_create /sbin/flashcache_destroy
+
+.PHONY: all
+all: install
+
+.PHONY: install
+install: build $(UTILS)
+	dkms install -m flashcache -v $(COMMIT_REV)
+
+.PHONY: build
+build: src_install
+	dkms build -m flashcache -v $(COMMIT_REV)
+
+.PHONY: src_install
+src_install:
+	install -o root -g root -m 0755 -d $(DKMS_DEST)
+	rsync -r src/ $(DKMS_DEST)/
+	sed "s/PACKAGE_VERSION=/PACKAGE_VERSION=$(COMMIT_REV)/" src/dkms.conf > "$(DKMS_DEST)/dkms.conf"
+
+.PHONY: boot_conf
+boot_conf: utils
+	# do mkinitramfs install if present
+	if test -d /etc/initramfs-tools/hooks; then \
+		install -o root -g root src/flashcache.hook /etc/initramfs-tools/hooks/flashcache ; \
+		install -o root -g root src/utils/flashcache_scan /etc/initramfs-tools/scripts/init-premount/ ; \
+		update-initramfs -k $(shell uname -r) -u ; \
+	fi
+
+.PHONY: utils
+utils:
+	$(MAKE) -C src/utils install
+
+.PHONY: clean
+clean:
+	$(MAKE) -f Makefile clean
+	dkms remove -m flashcache -v $(COMMIT_REV) --all
+	rm /etc/initramfs-tools/hooks/flashcache
+	rm /etc/initramfs-tools/scripts/init-premount/flashcache_scan

@@ -7,28 +7,39 @@ and maintaining additional third party kernel modules.
 http://en.wikipedia.org/wiki/Dynamic_Kernel_Module_Support
 
 I've added some simple DKMS configs for flashcache to make building and managing it a little less painful.
-The dirt quick way to get this working on Ubuntu 10.04 is as follows, and should be similar for any other
-distro supporting DKMS:
+This has been updated with a Makefile.dkms, which should hopefully do a sensible DKMS install without
+intervention. It's only been tested on Ubuntu 11.04, and right now requires initramfs-tools for boot support,
+so it probably won't work on CentOS 5 just yet. I plan to test and update things for CentOS 5 and 6
+in the near future.
 
-1. Symlink the flashcache and/or flashcache-wt source directories into /usr/src so DKMS can find them:
+Installation
+------------
 
-  cd /usr/src
-  sudo ln -s /path/to/flashcache/src flashcache-0.1
-  sudo ln -s /path/to/flashcache-wt/src flashcache-0.1
+Run "make -f Makefile.dkms", and it should build and install correctly for your kernel.
 
-2. Add them to DKMS:
+Boot from Flashcache
+--------------------
+If you have initramfs-tools, then flashcache utils and modules can be installed into the initramfs.
 
-  sudo dkms add -m flashcache -v 0.1
-  sudo dkms add -m flashcache-wt -v 0.1
+Ubuntu:
+ - Install flashcache modules and utilities using instructions from "Installation" section above.
+ - Install flashcache boot support:
+   make -f Makefile.dkms boot_conf
+ - Edit your /etc/fstab and /boot/grub/grub.cfg to change the root device to the flashcache device you intend to use.
+   (ex: /dev/mapper/fc-root)
+ - Boot off a live CD like the Ubuntu desktop installer.
+ - Mount your root device (mount /dev/root-partition /mnt)
+ - cd to your flashcache source directory, and install flashcache into the boot environment. (make install)
+ - Unmount your root device (umount /mnt)
+ - Create flashcache device backed by your root device. I recommend using the UUID path in case device renaming occurs:
+   flashcache_create -p back fc-root /dev/ssd_device /dev/disk/by-uuid/root_device_uuid
+ - Reboot!
 
-3. Build and install the modules using DKMS:
+CentOS:
+ - Instructions forthcoming once I've tested it. ;)
 
-  sudo dkms build -m flashcache -v 0.1 && sudo dkms install -m flashcache -v 0.1
-  sudo dkms build -m flashcache-wt -v 0.1 && sudo dkms install -m flashcache-wt -v 0.1
+Known Issues:
+ - Right now grub-probe fails to detect the underlying root device when booting off flashcache,
+   so you'll have to edit /boot/grub/grub.cfg manually.
 
-Done!
-
-Note that this won't install the utils you need to create the flashcache devices, you still
-have to build and install those separately.
-
- - Graeme Humphries <graeme@sudo.ca>
+Graeme Humphries <graeme@sudo.ca>

@@ -256,7 +256,7 @@ table_file : other cache args (format below). If this is omitted, dmsetup
 	     attempts to read this from stdin.
 
 table_file format :
-0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+0 <disk dev sz in sectors> flashcache <dm virtual dev> <ssd dev> <dm virtual name> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
 
 cache mode:
 	   1: Write Back
