@@ -155,9 +155,10 @@ main(int argc, char **argv)
 	char *disk_devname, *ssd_devname, *cachedev;
 	sector_t block_size = 0, cache_size = 0;
 	sector_t disk_devsize;
+	int write_around = 0;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:v")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:vr")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
@@ -171,6 +172,9 @@ main(int argc, char **argv)
                         break;			
 		case 'f':
 			force = 1;
+                        break;
+		case 'r':
+			write_around = 1;
                         break;
 		case '?':
 			usage(pname);
@@ -200,9 +204,10 @@ main(int argc, char **argv)
 	}
 	printf("cachedev %s, ssd_devname %s, disk_devname %s\n", 
 	       cachedev, ssd_devname, disk_devname);
-	printf("block_size %lu, cache_size %lu\n", block_size, cache_size);
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache-wt %s %s %lu ",
-		disk_devsize, disk_devname, ssd_devname, block_size);
+	printf("cache mode %s, block_size %lu, cache_size %lu\n", 
+	       ((write_around) ? "WRITE_AROUND" : "WRITE_THRU"), block_size, cache_size);
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache-wt %s %s %d %lu ",
+		disk_devsize, disk_devname, ssd_devname, write_around, block_size);
 	if (cache_size > 0) {
 		char cache_size_str[4096];
 		

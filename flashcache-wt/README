@@ -1,12 +1,13 @@
-flashcache-wt is a simple, non-persistent write through flashcache.
+flashcache-wt is a simple, non-persistent write-through and write-around
+flashcache.
 
 It is a separate code base from flashcache (which is write back only).
 
 Notes :
 -----
 1) flashcache-wt is non persistent, which means that on a cache remove 
-(or a reboot), you will lose the cache entirely. Since the cache is write 
-through, this will not result in any data loss.
+(or a reboot), you will lose the cache entirely. Since the cache is 
+write-through/write-around, this will not result in any data loss.
 2) Built on 2.6.18, .20, .27-.32 successfully. Tested on .18, .20, .27 
 and .32 successfully.
 
@@ -18,9 +19,12 @@ Creating a flashcache-wt volume :
 -------------------------------
 flashcache_wt_create : Create a new flashcache-wt volume.
 
-flashcache_wt_create [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+flashcache_wt_create [-r] [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
 
 Very similar to flashcache_create.
+
+Note : The default is to create the cache write-through. Use the -r option to create the
+cache write-around.
 
 Removing a flashcache-wt volume :
 ----------------------------

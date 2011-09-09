@@ -3,7 +3,7 @@
  *  FlashCache: Device mapper target for block-level disk caching
  *
  *  Copyright 2010 Facebook, Inc.
- *  Author: Mohan Srinivasan (mohan@facebook.com)
+ *  Author: Mohan Srinivasan (mohan@fb.com)
  *
  *  Based on DM-Cache:
  *   Copyright (C) International Business Machines Corp., 2006
@@ -33,10 +33,35 @@ enum {
 	FLASHCACHEADDNCPID_CMD=200,
 	FLASHCACHEDELNCPID_CMD,
 	FLASHCACHEDELNCALL_CMD,
+	FLASHCACHEADDWHITELIST_CMD,
+	FLASHCACHEDELWHITELIST_CMD,
+	FLASHCACHEDELWHITELISTALL_CMD,
 };
 
 #define FLASHCACHEADDNCPID	_IOW(FLASHCACHE_IOCTL, FLASHCACHEADDNCPID_CMD, pid_t)
 #define FLASHCACHEDELNCPID	_IOW(FLASHCACHE_IOCTL, FLASHCACHEDELNCPID_CMD, pid_t)
 #define FLASHCACHEDELNCALL	_IOW(FLASHCACHE_IOCTL, FLASHCACHEDELNCALL_CMD, pid_t)
+
+#define FLASHCACHEADDBLACKLIST		FLASHCACHEADDNCPID
+#define FLASHCACHEDELBLACKLIST		FLASHCACHEDELNCPID
+#define FLASHCACHEDELALLBLACKLIST	FLASHCACHEDELNCALL
+
+#define FLASHCACHEADDWHITELIST		_IOW(FLASHCACHE_IOCTL, FLASHCACHEADDWHITELIST_CMD, pid_t)
+#define FLASHCACHEDELWHITELIST		_IOW(FLASHCACHE_IOCTL, FLASHCACHEDELWHITELIST_CMD, pid_t)
+#define FLASHCACHEDELALLWHITELIST	_IOW(FLASHCACHE_IOCTL, FLASHCACHEDELWHITELISTALL_CMD, pid_t)
+
+#ifdef __KERNEL__
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
+int flashcache_ioctl(struct dm_target *ti, struct inode *inode,
+		     struct file *filp, unsigned int cmd,
+		     unsigned long arg);
+#else
+int flashcache_ioctl(struct dm_target *ti, unsigned int cmd,
+ 		     unsigned long arg);
+#endif
+void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
+int flashcache_uncacheable(struct cache_c *dmc);
+void flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force);
+#endif /* __KERNEL__ */
 
 #endif

@@ -70,6 +70,8 @@
 #define CACHEREADINPROG	3	/* cache read in progress, don't recycle */
 #define INPROG_INVALID	4	/* Write invalidated during a refill */
 
+#define DEV_PATHLEN	128
+
 /*
  * Cache context
  */
@@ -84,7 +86,9 @@ struct cache_c {
 	u_int8_t 		*cache_state;
 	u_int32_t		*set_lru_next;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
+	int			write_around_mode;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 	struct dm_io_client *io_client; /* Client memory pool*/
 #endif
 	
@@ -106,16 +110,29 @@ struct cache_c {
 	unsigned long wr_invalidates;	/* Number of write invalidations */
 	unsigned long rd_invalidates;	/* Number of read invalidations */
 	unsigned long cached_blocks;	/* Number of cached blocks */
+
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	unsigned long checksum_store;
 	unsigned long checksum_valid;
-	unsigned long checksum_invalid;
+	unsigned long checksum_invalid
+#endif /* FLASHCACHE_WT_CHECKSUMS */
+
 	unsigned long cache_wr_replace;
+	unsigned long uncached_reads;
+	unsigned long uncached_writes;
+	unsigned long cache_reads, cache_writes;
+	unsigned long disk_reads, disk_writes;	
+
+	char cache_devname[DEV_PATHLEN];
+	char disk_devname[DEV_PATHLEN];
 };
 
 /* Cache block metadata structure */
 struct cacheblock {
 	sector_t dbn;		/* Sector number of the cached block */
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	u_int64_t checksum;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 };
 
 /* Structure for a kcached job */
@@ -123,7 +140,7 @@ struct kcached_job {
 	struct list_head list;
 	struct cache_c *dmc;
 	struct bio *bio;	/* Original bio */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	struct io_region disk;
 	struct io_region cache;
 #else
@@ -143,7 +160,7 @@ struct kcached_job {
 /* Number of pages for I/O */
 #define FLASHCACHE_COPY_PAGES (1024)
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (BIO)->bi_size, (ERROR))
 #else
 #define flashcache_bio_endio(BIO, ERROR)	bio_endio((BIO), (ERROR))

@@ -3,15 +3,22 @@
 
 Introduction :
 ============
-Flashcache is a writeback block cache for Linux, built as a kernel module,
-using the Device Mapper. This document is a quick admministration guide 
-to flashcache.
+Flashcache is a block cache for Linux, built as a kernel module,
+using the Device Mapper. Flashcache supports writeback, writethrough
+and writearound caching modes. This document is a quick admministration
+guide to flashcache.
 
 Requirements :
 ============
-Flashcache has been built and tested on 2.6.18 and 2.6.20. If you'd like
-to build and use it on a newer kernel, please send me an email and I 
-can help. I will not support older than 2.6.18 kernels.
+Flashcache has been tested on variety of kernels between 2.6.18 and 2.6.38. 
+If you'd like to build and use it on a newer kernel, please send me an email 
+and I can help. I will not support older than 2.6.18 kernels.
+
+Cache Persistence :
+=================
+Writethru and Writearound caches are not persistent across a device removal
+or a reboot. Only Writeback caches are persistent across device removals
+and reboots.
 
 Cache creation and loading using the flashcache utilities :
 =========================================================
@@ -23,7 +30,8 @@ instead of using dmsetup.
 
 flashcache_create : Create a new flashcache volume.
 
-flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+flashcache_create -p back|around|thru [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+-p : cache mode (writeback/writethrough/writearound).
 -s : cache size. Optional. If this is not specified, the entire ssd device
      is used as cache. The default units is sectors. But you can specify 
      k/m/g as units as well.
@@ -34,22 +42,22 @@ flashcache_create [-s cache size] [-b block size] cachedevname ssd_devname disk_
 -f : force create. by pass checks (eg for ssd sectorsize).
 
 Examples :
-flashcache_create -s 1g -b 4k cachedev /dev/sdc /dev/sdb
-Creates a 1GB cache volume with a 4KB block size on ssd device /dev/sdc
-to cache the disk volume /dev/sdb. The name of the device created is
-"cachedev".
+flashcache_create -p back -s 1g -b 4k cachedev /dev/sdc /dev/sdb
+Creates a 1GB writeback cache volume with a 4KB block size on ssd 
+device /dev/sdc to cache the disk volume /dev/sdb. The name of the device 
+created is "cachedev".
 
-flashcache_create -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
-Same as above but units specified in sectors instead. The name of the 
-device created is "cachedev".
+flashcache_create -p thru -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
+Same as above but creates a write through cache with units specified in 
+sectors instead. The name of the device created is "cachedev".
 
-flashcache_load : Load an existing flashcache volume.
+flashcache_load : Load an existing writeback cache volume.
 
 flashcache_load cachedevname ssd_devname disk_devname
 
 Example :
 flashcache_load cachedev /dev/sdc /dev/sdb
-Load the existing cache on /dev/sdc, calling the flashcache volume
+Load the existing writeback cache on /dev/sdc, calling the flashcache volume
 cachedev.
 
 flashcache_destroy : Destroy an existing flashcache. All data will be lost !!!
@@ -61,16 +69,19 @@ flashcache_destroy /dev/sdc
 Destroy the existing cache on /dev/sdc. All data is lost !!!
 
 Removing a flashcache volume :
-----------------------------
-Use dmsetup remove to remove a flashcache volume. Note that the 
-default behavior on a remove is to clean all dirty cacheblock to
-disk. The remove will not return until all blocks are cleaned.
-Progress on disk cleaning is reported on the console (also 
-see the "fast_remove" flashcache sysctl).
+============================
+Use dmsetup remove to remove a flashcache volume. For writeback 
+cache mode,  the default behavior on a remove is to clean all dirty 
+cache blocks to disk. The remove will not return until all blocks 
+are cleaned. Progress on disk cleaning is reported on the console 
+(also see the "fast_remove" flashcache sysctl).
 
 A reboot of the node will also result in all dirty cache blocks being
 cleaned synchronously (again see the note about "fast_remove" in the
 sysctls section).
+
+For writethrough and writearound caches, the device removal or reboot
+results in the cache being destroyed. 
 
 Example:
 dmsetup remove cachedev
@@ -89,10 +100,10 @@ dmsetup status cachedev
 dmsetup table cachedev
 
 Flashcache errors are reported in 
-/proc/flashcache_errors
+/proc/flashcache/<cache name>/flashcache_errors
 
 Flashcache stats are also reported in 
-/proc/flashcache_stats 
+/proc/flashcache/<cache name>/flashcache_stats
 for easier parseability.
 
 Cache Blocksize selection :
@@ -100,74 +111,136 @@ Cache Blocksize selection :
 Cache blocksize selection is critical for good cache utilization and
 performance. 
 
-For the majority of filesystems and applications, a 4KB blocksize 
-works well and is the right choice.
+A 4KB cache blocksize for the vast majority of workloads (and filesystems).
 
-Some applications use a larger blocksize. In such cases, 
-*with O_DIRECT and XFS*, it is possible (and beneficial) to use
-a larger flashcache blocksize (to match the application blocksize).
-Note that the blocksize must be a power of 2.
+Cache Metadata Blocksize selection :
+==================================
+This section only applies to the writeback cache mode. Writethrough and 
+writearound modes store no cache metadata at all.
 
-An example, MySQL/InnoDB uses 16KB blocksize by default. In this cases, 
-*with O_DIRECT and XFS*, we can use a 16KB flashcache blocksize. 
-If we do this, it is critical to tune XFS's stripe unit (su) to 16KB, 
-and set the stripe width accordingly (man 8 mkfs.xfs). Setting the 
-stripe unit to 16KB will result in XFS sending down 16KB multiple IOs.
+In Flashcache version 1, the metadata blocksize was fixed at 1 (512b) sector.
+Flashcache version 2 removes this limitation. In version 2, we can configure 
+a larger flashcache metadata blocksize. Version 2 maintains backwards compatibility
+for caches created with Version 1. For these cases, a metadata blocksize of 512
+will continue to be used.
 
-# mkfs.xfs -f -d su=16384,sw=40 /dev/cciss/c0d1p4
+flashcache_create -m can be used to optionally configure the metadata blocksize.
+Defaults to 4KB.
 
-This sets the stripe unit to 16KB and the stripe width to 
-640KB (16KB * 40).
+Ideal choices for the metadata blocksize are 4KB (default) or 8KB. There is 
+little benefit to choosing a metadata blocksize greater than 8KB. The choice 
+of metadata blocksize is subject to the following rules :
 
-Note : For the 16KB blocksize to work well with XFS, it is necessary
-to align the volume to start at a 16KB boundary. There are some 
-alignment issues with XFS/LVM and flashcache. If using LVM, use the
-4KB cache blocksize.
+1) Metadata blocksize must be a power of 2.
+2) Metadata blocksize cannot be smaller than sector size configured on the 
+ssd device.
+3) A single metadata block cannot contain metadata for 2 cache sets. In other
+words, with the default associativity of 512 (with each cache metadata slot 
+sizing at 16 bytes), the entire metadata for a given set fits in 8KB (512*16b).
+For an associativity of 512, we cannot configure a metadata blocksize greater
+than 8KB.
+
+Advantages of choosing a larger (than 512b) metadata blocksize :
+- Allows the ssd to be configured to larger sectors. For example, some ssds
+  allow choosing a 4KB sector, often a more performant choice.
+- Allows flashache to do better batching of metadata updates, potentially 
+  reducing metadata updates, small ssd writes, reducing write amplification
+  and higher ssd lifetimes.
+
+Thanks due to Earle Philhower of Virident for this feature !
 
 FlashCache Sysctls :
 ==================
-These sysctls will apply to all cache devices on the node.
+Flashcache sysctls operate on a per-cache device basis. A couple of examples
+first.
 
-dev.flashcache.fast_remove:
+Sysctls for a Write around mode cache :
+cache device /dev/ram3, disk device /dev/ram4
+
+dev.flashcache.ram3+ram4.cache_all = 1
+dev.flashcache.ram3+ram4.zero_stats = 0
+dev.flashcache.ram3+ram4.reclaim_policy = 0
+dev.flashcache.ram3+ram4.pid_expiry_secs = 60
+dev.flashcache.ram3+ram4.max_pids = 100
+dev.flashcache.ram3+ram4.do_pid_expiry = 0
+dev.flashcache.ram3+ram4.io_latency_hist = 0
+
+Sysctls for a Write back mode cache :
+cache device /dev/sdb, disk device /dev/cciss/c0d2
+
+dev.flashcache.sdb+c0d2.fallow_delay = 900
+dev.flashcache.sdb+c0d2.fallow_clean_speed = 2
+dev.flashcache.sdb+c0d2.cache_all = 1
+dev.flashcache.sdb+c0d2.fast_remove = 0
+dev.flashcache.sdb+c0d2.zero_stats = 0
+dev.flashcache.sdb+c0d2.reclaim_policy = 0
+dev.flashcache.sdb+c0d2.pid_expiry_secs = 60
+dev.flashcache.sdb+c0d2.max_pids = 100
+dev.flashcache.sdb+c0d2.do_pid_expiry = 0
+dev.flashcache.sdb+c0d2.max_clean_ios_set = 2
+dev.flashcache.sdb+c0d2.max_clean_ios_total = 4
+dev.flashcache.sdb+c0d2.dirty_thresh_pct = 20
+dev.flashcache.sdb+c0d2.stop_sync = 0
+dev.flashcache.sdb+c0d2.do_sync = 0
+dev.flashcache.sdb+c0d2.io_latency_hist = 0
+
+Sysctls common to all cache modes :
+
+dev.flashcache.<cachedev>.cache_all:
+	Cache everything (default).
+dev.flashcache.<cachedev>.zero_stats:
+	Zero stats (once).
+dev.flashcache.<cachedev>.reclaim_policy:
+	FIFO (0) vs LRU (1). Defaults to FIFO. Can be switched at 
+	runtime.
+dev.flashcache.<cachedev>.io_latency_hist:
+	Compute IO latencies and plot these out on a histogram.
+	The scale is 250 usecs. This is disabled by default since 
+	internally flashcache uses gettimeofday() to compute latency
+	and this can get expensive depending on the clocksource used.
+	Setting this to 1 enables computation of IO latencies.
+	The IO latency histogram is appended to 'dmsetup status'.
+(There is little reason to tune these)
+dev.flashcache.<cachedev>.pid_expiry_secs:
+	Set the expiry on the pid white/black lists.
+dev.flashcache.<cachedev>.max_pids:
+	Maximum number of pids in the white/black lists.
+dev.flashcache.<cachedev>.do_pid_expiry:
+	Enable expiry on the list of pids in the white/black lists.
+
+Sysctls for writeback mode only :
+
+dev.flashcache.<cachedev>.fallow_delay = 900
+	In seconds. Clean dirty blocks that have been "idle" (not 
+	read or written) for fallow_delay seconds. Default is 60 
+	seconds. 
+	Setting this to 0 disables idle cleaning completely.
+dev.flashcache.<cachedev>.fallow_clean_speed = 2
+	The maximum number of "fallow clean" disk writes per set 
+	per second. Defaults to 2.
+dev.flashcache.<cachedev>.fast_remove = 0
 	Don't sync dirty blocks when removing cache. On a reload
 	both DIRTY and CLEAN blocks persist in the cache. This 
 	option can be used to do a quick cache remove. 
 	CAUTION: The cache still has uncommitted (to disk) dirty
 	blocks after a fast_remove.
-dev.flashcache.zero_stats:
-	Zero out all cache stats reported by "dmsetup status".
-dev.flashcache.reclaim_policy:
-	FIFO (0) vs LRU (1). Defaults to FIFO. Can be switched at 
-	runtime.
-dev.flashcache.write_merge:
-	Enable write merging. When cleaning blocks tack on any
-	contigous blocks in the set to the ones that are being cleaned
-	Defaults to on.
-dev.flashcache.dirty_thresh_pct:
+dev.flashcache.<cachedev>.dirty_thresh_pct = 20
 	Flashcache will attempt to keep the dirty blocks in each set 
 	under this %. A lower dirty threshold increases disk writes, 
 	and reduces block overwrites, but increases the blocks
 	available for read caching.
-dev.flashcache.do_sync: 
+dev.flashcache.<cachedev>.stop_sync = 0
+	Stop the sync in progress.dev.flashcache.cache_all:
+	Global caching mode to cache everything or cache nothing.
+	See section on Caching Controls. Defaults to "cache everything".
+dev.flashcache.<cachedev>.do_sync = 0
 	Schedule cleaning of all dirty blocks in the cache. 
-dev.flashcache.stop_sync: 
-	Stop the sync in progress.
-
-There is little reason to change these :
-
-dev.flashcache.max_clean_ios_set:
+(There is little reason to tune these)
+dev.flashcache.<cachedev>.max_clean_ios_set = 2
 	Maximum writes that can be issues per set when cleaning
 	blocks.
-dev.flashcache.max_clean_ios_total:
+dev.flashcache.<cachedev>.max_clean_ios_total = 4
 	Maximum writes that can be issued when syncing all blocks.
-dev.flashcache.debug:
-	Enable verbose debugging.
-dev.flashcache.do_nc_pid_expiry:
-	Enable expiry on the list of non-cacheable pids.
-dev.flashcache.nc_pid_expiry_secs:
-	Set the expiry on the list of non-cacheable pids.
-dev.flashcache.max_nc_pids:
-	Maximum number of non-cacheable pids.
 
 Using dmsetup to create and load flashcache volumes :
 ===================================================
@@ -183,7 +256,12 @@ table_file : other cache args (format below). If this is omitted, dmsetup
 	     attempts to read this from stdin.
 
 table_file format :
-0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+
+cache mode:
+	   1: Write Back
+	   2: Write Through
+	   3: Write Around
 
 flashcache cmd: 
 	   1: load existing cache
@@ -208,32 +286,71 @@ cache set size:
 
 Example :
 
-echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 2 8 522000000 | dmsetup create cachedev
+echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 1 2 8 522000000 | dmsetup create cachedev
 
-This creates a cache device called "cachedev" (/dev/mapper/cachedev)
+This creates a writeback cache device called "cachedev" (/dev/mapper/cachedev)
 with a 4KB blocksize to cache /dev/cciss/c0d1p2 on /dev/fioa2.
 The size of the cache is 522000000 sectors.
 
 (TODO : Change loading of the cache happen via "dmsetup load" instead
 of "dmsetup create").
 
-Non-cacheability ioctls :
-=======================
-When doing backups or full database table scans, often we want
-IOs to be non-cacheable by flashcache. 
+Caching Controls
+================
+Flashcache can be put in one of 2 modes - Cache Everything or 
+Cache Nothing (dev.flashcache.cache_all). The defaults is to "cache
+everything".
 
-Flashcache provides support (via ioctls) to mark all IOs for 
-tagged processes be non-cacheable. (Note that this only works
-for O_DIRECT IOs. For buffered IOs, pdflush, kswapd would 
-also do the writes, with flashcache caching those).
+These 2 modes have a blacklist and a whitelist.
 
-The following ioctls are supported on /dev/mapper/<cachedev>
+The tgid (thread group id) for a group of pthreads can be used as a
+shorthand to tag all threads in an application. The tgid for a pthread
+is returned by getpid() and the pid of the individual thread is
+returned by gettid().
 
-FLASHCACHEADDNCPID: add the pid to the list of pids tagged for
-non-cacheable IOs.
-FLASHCACHEDELNCPID: remove the pid from the list.
-FLASHCACHEDELNCALL: remove all registered non-cacheable pids. 
-This can be used to cleanup if a process dies.
+The algorithm works as follows :
+
+In "cache everything" mode,
+1) If the pid of the process issuing the IO is in the blacklist, do
+not cache the IO. ELSE,
+2) If the tgid is in the blacklist, don't cache this IO. UNLESS
+3) The particular pid is marked as an exception (and entered in the
+whitelist, which makes the IO cacheable).
+
+Conversely, in "cache nothing" mode,
+1) If the pid of the process issuing the IO is in the whitelist,
+cache the IO. ELSE,
+2) If the tgid is in the whitelist, cache this IO. UNLESS
+3) The particular pid is marked as an exception (and entered in the
+blacklist, which makes the IO non-cacheable).
+
+Examples :
+--------
+1) You can make the global cache setting "cache nothing", and add the
+tgid of your pthreaded application to the whitelist. Which makes only
+IOs issued by your application cacheable by Flashcache. 
+2) You can make the global cache setting "cache everything" and add
+tgids (or pids) of other applications that may issue IOs on this
+volume to the blacklist, which will make those un-interesting IOs not
+cacheable. 
+
+Note that this only works for O_DIRECT IOs. For buffered IOs, pdflush,
+kswapd would also do the writes, with flashcache caching those.
+
+The following cacheability ioctls are supported on /dev/mapper/<cachedev> 
+
+FLASHCACHEADDBLACKLIST: add the pid (or tgid) to the blacklist.
+FLASHCACHEDELBLACKLIST: Remove the pid (or tgid) from the blacklist.
+FLASHCACHEDELALLBLACKLIST: Clear the blacklist. This can be used to
+cleanup if a process dies.
+
+FLASHCACHEADDWHITELIST: add the pid (or tgid) to the whitelist.
+FLASHCACHEDELWHITELIST: Remove the pid (or tgid) from the whitelist.
+FLASHCACHEDELALLWHITELIST: Clear the whitelist. This can be used to
+cleanup if a process dies.
+
+/proc/flashcache_pidlists shows the list of pids on the whitelist
+and the blacklist.
 
 Security Note :
 =============
@@ -247,3 +364,83 @@ corrupt data here.
 You can work around this by setting file permissions on files in 
 the flashcache volume appropriately.
 
+Tuning XFS for better flashcache performance :
+============================================
+If you run XFS/Flashcache, it is worth tuning XFS' allocation group
+parameters (agsize/agcount) to achieve better flashcache performance.
+XFS allocates blocks for files in a given directory in a new
+allocation group. By tuning agsize and agcount (mkfs.xfs parameters),
+we can achieve much better distribution of blocks across
+flashcache. Better distribution of blocks across flashcache will
+decrease collisions on flashcache sets considerably, increase cache
+hit rates significantly and result in lower IO latencies.
+
+We can achieve this by computing agsize (and implicitly agcount) using
+these equations,
+
+C = Cache size, 
+V = Size of filesystem Volume.
+
+agsize % C = (1/agcount)*C
+agsize * agcount ~= V
+
+where agsize <= 1000g (XFS limits on agsize).
+
+A couple of examples that illustrate the formula,
+
+For agcount = 4, let's divide up the cache into 4 equal parts (each
+part is size C/agcount). Let's call the parts C1, C2, C3, C4. One
+ideal way to map the allocation groups onto the cache is as follows.
+
+Ag1	     Ag2	Ag3	       Ag4
+--	     --		--	       --
+C1	     C2		C3	       C4	(stripe 1)
+C2	     C3		C4	       C1	(stripe 2)
+C3	     C4		C1	       C2	(stripe 3)
+C4	     C1		C2	       C3	(stripe 4)
+C1	     C2		C3	       C4	(stripe 5)
+
+In this simple example, note that each "stripe" has 2 properties
+1) Each element of the stripe is a unique part of the cache.
+2) The union of all the parts for a stripe gives us the entire cache.
+
+Clearly, this is an ideal mapping, from a distribution across the
+cache point of view.
+
+Another example, this time with agcount = 5, the cache is divided into
+5 equal parts C1, .. C5.
+
+Ag1	     Ag2	Ag3	       Ag4	Ag5
+--	     --		--	       --	--
+C1	     C2		C3	       C4	C5	(stripe 1)
+C2	     C3		C4	       C5	C1	(stripe 2)
+C3	     C4		C5	       C1	C2	(stripe 3)
+C4	     C5		C1	       C2	C3	(stripe 4)
+C5	     C1		C2	       C3	C4	(stripe 5)
+C1	     C2		C3	       C4	C5	(stripe 6)
+
+A couple of examples that compute the optimal agsize for a given
+Cachesize and Filesystem volume size.
+
+a) C = 600g, V = 3,5TB
+Consider agcount = 5
+
+agsize % 600 = (1/5)*600
+agsize % 600 = 120
+
+So an agsize of 720g would work well, and 720*5 = 3.6TB (~ 3.5TB)
+
+b) C = 150g, V = 3.5TB
+Consider agcount=4
+
+agsize % 150 = (1/4)*150
+agsize % 150 = 37.5
+
+So an agsize of 937g would work well, and 937*4 = 3.7TB (~ 3.5TB)
+
+As an alternative, 
+
+agsize % C = (1 - (1/agcount))*C
+agsize * agcount ~= V
+
+Works just as well as the formula above.

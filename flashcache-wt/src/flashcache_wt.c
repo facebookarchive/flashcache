@@ -36,13 +36,21 @@
 #include <linux/pagemap.h>
 #include <linux/random.h>
 #include <linux/version.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/hardirq.h>
+#include <asm/kmap_types.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
+#include <linux/device-mapper.h>
+#include <linux/bio.h>
+#endif
 #include "dm.h"
 #include "dm-io.h"
 #include "dm-bio-list.h"
 #else
-#if LINUX_VERSION_CODE == KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 #include "dm.h"
 #endif
 #include <linux/dm-io.h>
@@ -52,14 +60,22 @@
 
 #include "flashcache_wt.h"
 
+#define FLASHCACHE_WT_SW_VERSION "flashcache_wt-1.0"
+char *flashcache_wt_sw_version = FLASHCACHE_WT_SW_VERSION;
+
 static struct workqueue_struct *_kcached_wq;
 static struct work_struct _kcached_work;
 
-static int cache_read_miss(struct cache_c *dmc, struct bio* bio,
-			   int index);
-static int cache_write(struct cache_c *dmc, 
-		       struct bio* bio);
+static void cache_read_miss(struct cache_c *dmc, struct bio* bio,
+			    int index);
+static void cache_write(struct cache_c *dmc, 
+			struct bio* bio);
 static int cache_invalidate_blocks(struct cache_c *dmc, struct bio *bio);
+
+static void flashcache_wt_uncached_io_callback(unsigned long error, 
+					       void *context);
+static void flashcache_wt_start_uncached_io(struct cache_c *dmc, 
+					    struct bio *bio);
 
 u_int64_t size_hist[33];
 
@@ -71,22 +87,26 @@ static DEFINE_SPINLOCK(_job_lock);
 static LIST_HEAD(_complete_jobs);
 static LIST_HEAD(_io_jobs);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-static int dm_io_async_bvec(unsigned int num_regions, 
-			    struct dm_io_region *where, int rw, 
-			    struct bio_vec *bvec, io_notify_fn fn, 
-			    void *context)
+#ifndef DM_MAPIO_SUBMITTED
+#define DM_MAPIO_SUBMITTED	0
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int dm_io_async_bvec(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+		     struct dm_io_region *where, 
+#else
+		     struct io_region *where, 
+#endif
+		     int rw, 
+		     struct bio_vec *bvec, io_notify_fn fn, 
+		     void *context)
 {
 	struct kcached_job *job = (struct kcached_job *)context;
 	struct cache_c *dmc = job->dmc;
 	struct dm_io_request iorq;
 
-#if 0
-	/* XXX - Why hint SYNCIO ? */
-	iorq.bi_rw = (rw | (1 << BIO_RW_SYNCIO));
-#else
 	iorq.bi_rw = rw;
-#endif
 	iorq.mem.type = DM_IO_BVEC;
 	iorq.mem.ptr.bvec = bvec;
 	iorq.notify.fn = fn;
@@ -97,22 +117,30 @@ static int dm_io_async_bvec(unsigned int num_regions,
 }
 #endif
 
+#ifdef FLASHCACHE_WT_CHECKSUMS
 static u_int64_t
 flashcache_wt_compute_checksum(struct bio *bio)
 {
 	int i;	
 	u_int64_t sum = 0, *idx;
 	int cnt;
+	int kmap_type;
+	void *kvaddr;
 
+	if (in_interrupt())
+		kmap_type = KM_SOFTIRQ0;
+	else
+		kmap_type = KM_USER0;
 	for (i = bio->bi_idx ; i < bio->bi_vcnt ; i++) {
+		kvaddr = kmap_atomic(bio->bi_io_vec[i].bv_page, kmap_type);
 		idx = (u_int64_t *)
-			(kmap(bio->bi_io_vec[i].bv_page) + bio->bi_io_vec[i].bv_offset);
+			((char *)kvaddr + bio->bi_io_vec[i].bv_offset);
 		cnt = bio->bi_io_vec[i].bv_len;
 		while (cnt > 0) {
 			sum += *idx++;
 			cnt -= sizeof(u_int64_t);
 		}
-		kunmap(bio->bi_io_vec[i].bv_page);
+		kunmap_atomic(kvaddr, kmap_type);
 	}
 	return sum;
 }
@@ -148,17 +176,29 @@ flashcache_wt_validate_checksum(struct kcached_job *job)
 	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
 	return retval;
 }
+#else /* FLASHCACHE_WT_CHECKSUMS */
+static void
+flashcache_wt_store_checksum(struct kcached_job *job)
+{
+}
+
+static int
+flashcache_wt_validate_checksum(struct kcached_job *job)
+{
+	return 0;
+}
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 
 static int 
 jobs_init(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
-	_job_cache = kmem_cache_create("kcached-jobs",
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,23)
+	_job_cache = kmem_cache_create("kcached-jobs-wt",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL, NULL);
 #else
-	_job_cache = kmem_cache_create("kcached-jobs",
+	_job_cache = kmem_cache_create("kcached-jobs-wt",
 	                               sizeof(struct kcached_job),
 	                               __alignof__(struct kcached_job),
 	                               0, NULL);
@@ -318,7 +358,10 @@ do_io(struct kcached_job *job)
 	VERIFY(job->rw == WRITECACHE);
 	/* Write to cache device */
 	flashcache_wt_store_checksum(job);
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	dmc->checksum_store++;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
+	dmc->cache_writes++;
 	r = dm_io_async_bvec(1, &job->cache, WRITE, bio->bi_io_vec + bio->bi_idx,
 			     flashcache_wt_io_callback, job);
 	VERIFY(r == 0); /* In our case, dm_io_async_bvec() must always return 0 */
@@ -335,15 +378,14 @@ flashcache_wt_do_complete(struct kcached_job *job)
 	VERIFY(job->rw == READCACHE_DONE);
 	DPRINTK("flashcache_wt_do_complete: %llu", bio->bi_sector);
 	/* error || block invalidated while reading from cache || bad checksum */
-	/* Kick this IO back to the source bdev */
-	bio->bi_bdev = dmc->disk_dev->bdev;
-	generic_make_request(bio);
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	dmc->cache_state[job->index] = INVALID;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	mempool_free(job, _job_pool);
 	if (atomic_dec_and_test(&dmc->nr_jobs))
 		wake_up(&dmc->destroyq);
+	/* Kick this IO back to the source bdev */
+	flashcache_wt_start_uncached_io(dmc, bio);
 	return 0;
 }
 
@@ -375,7 +417,7 @@ do_work(struct work_struct *work)
 static int 
 kcached_init(struct cache_c *dmc)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	int r;
 
 	r = dm_io_get(FLASHCACHE_ASYNC_SIZE);
@@ -394,7 +436,7 @@ kcached_client_destroy(struct cache_c *dmc)
 {
 	/* Wait for completion of all jobs submitted by this client. */
 	wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,22)
 	dm_io_put(FLASHCACHE_ASYNC_SIZE);
 #endif
 }
@@ -553,10 +595,15 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 		return NULL;
 	job->disk.bdev = dmc->disk_dev->bdev;
 	job->disk.sector = bio->bi_sector;
-	job->disk.count = dmc->block_size;
+	if (index != -1)
+		job->disk.count = dmc->block_size;
+	else
+		job->disk.count = to_sector(bio->bi_size);
 	job->cache.bdev = dmc->cache_dev->bdev;
-	job->cache.sector = index << dmc->block_shift;
-	job->cache.count = dmc->block_size;
+	if (index != -1) {
+		job->cache.sector = index << dmc->block_shift;
+		job->cache.count = dmc->block_size;
+	}
 	job->dmc = dmc;
 	job->bio = bio;
 	job->index = index;
@@ -564,7 +611,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	return job;
 }
 
-static int 
+static void
 cache_read_miss(struct cache_c *dmc, struct bio* bio,
 		int index)
 {
@@ -575,26 +622,25 @@ cache_read_miss(struct cache_c *dmc, struct bio* bio,
 		bio->bi_sector, bio->bi_size, index);
 
 	job = new_kcached_job(dmc, bio, index);
-	if (job == NULL) {
+	if (unlikely(job == NULL)) {
 		/* XXX - need to bump up a stat here */	
 		DMERR("cache_read_miss: Cannot allocate job\n");
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_state[index] = INVALID;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		flashcache_bio_endio(bio, -EIO);
+	} else {
+		job->rw = READSOURCE; /* Fetch data from the source device */
+		DPRINTK("Queue job for %llu", bio->bi_sector);
+		atomic_inc(&dmc->nr_jobs);
+		dmc->disk_reads++;
+		dm_io_async_bvec(1, &job->disk, READ,
+				 bio->bi_io_vec + bio->bi_idx,
+				 flashcache_wt_io_callback, job);
 	}
-	job->rw = READSOURCE; /* Fetch data from the source device */
-	DPRINTK("Queue job for %llu", bio->bi_sector);
-	atomic_inc(&dmc->nr_jobs);
-	dm_io_async_bvec(1, &job->disk, READ,
-			 bio->bi_io_vec + bio->bi_idx,
-			 flashcache_wt_io_callback, job);
-	return DM_MAPIO_SUBMITTED;
 }
 
-static int
+static void
 cache_read(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
@@ -605,7 +651,6 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
 		bio->bi_sector, bio->bi_size);
 
-	dmc->reads++;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	res = cache_lookup(dmc, bio, &index);
 	/* Cache Hit */
@@ -618,26 +663,26 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
 			     bio->bi_sector, bio->bi_size, index, "CACHE HIT");
 		job = new_kcached_job(dmc, bio, index);
-		if (job == NULL) {
+		if (unlikely(job == NULL)) {
 			/* 
-			 * Can't allocate job, bounce back to source dev 
+			 * Can't allocate job, bounce back error
 			 * XXX - need up bump a stat here
 			 */
 			DMERR("cache_read(_hit): Cannot allocate job\n");
 			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 			dmc->cache_state[index] = VALID;
 			spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-			/* Forward to source device */
-			bio->bi_bdev = dmc->disk_dev->bdev;
-			return DM_MAPIO_REMAPPED;
+			flashcache_bio_endio(bio, -EIO);
+		} else {
+			job->rw = READCACHE; /* Fetch data from the source device */
+			DPRINTK("Queue job for %llu", bio->bi_sector);
+			atomic_inc(&dmc->nr_jobs);
+			dmc->cache_reads++;
+			dm_io_async_bvec(1, &job->cache, READ,
+					 bio->bi_io_vec + bio->bi_idx,
+					 flashcache_wt_io_callback, job);
 		}
-		job->rw = READCACHE; /* Fetch data from the source device */
-		DPRINTK("Queue job for %llu", bio->bi_sector);
-		atomic_inc(&dmc->nr_jobs);
-		dm_io_async_bvec(1, &job->cache, READ,
-				 bio->bi_io_vec + bio->bi_idx,
-				 flashcache_wt_io_callback, job);
-		return DM_MAPIO_SUBMITTED;
+		return;
 	}
 	/*
 	 * In all cases except for a cache hit (and VALID), test for potential 
@@ -646,9 +691,9 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 	if (cache_invalidate_blocks(dmc, bio) > 0) {
 		/* A non zero return indicates an inprog invalidation */
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	if (res == -1 || res >= INPROG) {
 		/*
@@ -659,9 +704,9 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		DPRINTK_LITE("Cache read: Block %llu(%lu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	/* 
 	 * (res == INVALID) Cache Miss 
@@ -678,7 +723,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 
 	DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
 		bio->bi_sector, bio->bi_size, index, "CACHE MISS & REPLACE");
-	return cache_read_miss(dmc, bio, index);
+	cache_read_miss(dmc, bio, index);
 }
 
 static int
@@ -745,7 +790,7 @@ cache_invalidate_blocks(struct cache_c *dmc, struct bio *bio)
 	return (inprog_inval_start + inprog_inval_end);
 }
 
-static int
+static void
 cache_write(struct cache_c *dmc, struct bio* bio)
 {
 	int index;
@@ -753,22 +798,21 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	unsigned long flags;
 	struct kcached_job *job;
 
-	dmc->writes++;
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	if (cache_invalidate_blocks(dmc, bio) > 0) {
 		/* A non zero return indicates an inprog invalidation */
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	res = cache_lookup(dmc, bio, &index);
 	VERIFY(res == -1 || res == INVALID);
 	if (res == -1) {
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+		return;
 	}
 	if (dmc->cache_state[index] == VALID) {
 		dmc->cached_blocks--;
@@ -778,26 +822,34 @@ cache_write(struct cache_c *dmc, struct bio* bio)
 	dmc->cache[index].dbn = bio->bi_sector;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 	job = new_kcached_job(dmc, bio, index);
-	if (job == NULL) {
+	if (unlikely(job == NULL)) {
 		/* XXX - need to bump up a stat here */
 		DMERR("cache_write: Cannot allocate job\n");
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		dmc->cache_state[index] = INVALID;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		flashcache_bio_endio(bio, -EIO);
+		return;
 	}
 	job->rw = WRITESOURCE; /* Write data to the source device */
 	DPRINTK("Queue job for %llu", bio->bi_sector);
 	atomic_inc(&job->dmc->nr_jobs);
+	dmc->disk_writes++;
 	dm_io_async_bvec(1, &job->disk, WRITE, bio->bi_io_vec + bio->bi_idx,
 			 flashcache_wt_io_callback, job);
-	return DM_MAPIO_SUBMITTED;
+	return;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 #define bio_barrier(bio)        ((bio)->bi_rw & (1 << BIO_RW_BARRIER))
+#else
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
+#define bio_barrier(bio)        ((bio)->bi_rw & REQ_HARDBARRIER)
+#else
+#define bio_barrier(bio)        ((bio)->bi_rw & REQ_FLUSH)
+#endif
+#endif
 #endif
 
 /*
@@ -824,19 +876,90 @@ flashcache_wt_map(struct dm_target *ti, struct bio *bio,
 
 	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
 
-	if (to_sector(bio->bi_size) != dmc->block_size) {
+	if (bio_data_dir(bio) == READ)
+		dmc->reads++;
+	else
+		dmc->writes++;		
+
+	if (to_sector(bio->bi_size) != dmc->block_size ||
+	    (dmc->write_around_mode && (bio_data_dir(bio) == WRITE))) {
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		(void)cache_invalidate_blocks(dmc, bio);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		/* Forward to source device */
-		bio->bi_bdev = dmc->disk_dev->bdev;
-		return DM_MAPIO_REMAPPED;
+		/* Start uncached IO */
+		flashcache_wt_start_uncached_io(dmc, bio);
+	} else {
+		if (bio_data_dir(bio) == READ)
+			cache_read(dmc, bio);
+		else
+			cache_write(dmc, bio);
 	}
+	return DM_MAPIO_SUBMITTED;
+}
 
-	if (bio_data_dir(bio) == READ)
-		return cache_read(dmc, bio);
+static void
+flashcache_wt_uncached_io_callback(unsigned long error, void *context)
+{
+	struct kcached_job *job = (struct kcached_job *) context;
+        struct cache_c *dmc = job->dmc;
+        unsigned long flags;
+
+	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	if (bio_data_dir(job->bio) == READ)
+		dmc->uncached_reads++;
 	else
-		return cache_write(dmc, bio);
+		dmc->uncached_writes++;		
+	(void)cache_invalidate_blocks(dmc, job->bio);
+	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	flashcache_bio_endio(job->bio, error);
+	mempool_free(job, _job_pool);
+	if (atomic_dec_and_test(&dmc->nr_jobs))
+		wake_up(&dmc->destroyq);
+}
+
+static void
+flashcache_wt_start_uncached_io(struct cache_c *dmc, struct bio *bio)
+{
+	int is_write = (bio_data_dir(bio) == WRITE);
+	struct kcached_job *job;
+	
+	job = new_kcached_job(dmc, bio, -1);
+	if (unlikely(job == NULL)) {
+		flashcache_bio_endio(bio, -EIO);
+		return;
+        }
+	atomic_inc(&dmc->nr_jobs);
+	if (bio_data_dir(job->bio) == READ)
+		dmc->disk_reads++;
+	else
+		dmc->disk_writes++;			
+	dm_io_async_bvec(1, &job->disk,
+			 ((is_write) ? WRITE : READ),
+			 bio->bi_io_vec + bio->bi_idx,
+			 flashcache_wt_uncached_io_callback, job);
+}
+
+static int inline
+flashcache_wt_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
+		      char *dmc_dname, sector_t tilen)
+{
+	int rc;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else
+#if defined(RHEL_MAJOR) && RHEL_MAJOR == 6
+	rc = dm_get_device(ti, pth,
+			   dm_table_get_mode(ti->table), dmd);
+#else 
+	rc = dm_get_device(ti, pth, 0, tilen,
+			   dm_table_get_mode(ti->table), dmd);
+#endif
+#endif
+	if (!rc)
+		strncpy(dmc_dname, pth, DEV_PATHLEN);
+	return rc;
 }
 
 /*
@@ -862,7 +985,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad;
 	}
 
-	dmc = kmalloc(sizeof(*dmc), GFP_KERNEL);
+	dmc = kzalloc(sizeof(*dmc), GFP_KERNEL);
 	if (dmc == NULL) {
 		ti->error = "flashcache-wt: Failed to allocate cache context";
 		r = ENOMEM;
@@ -871,16 +994,13 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	dmc->tgt = ti;
 
-	r = dm_get_device(ti, argv[0], 0, ti->len,
-			  dm_table_get_mode(ti->table), &dmc->disk_dev);
-	if (r) {
-		ti->error = "flashcache-wt: Source device lookup failed";
+	if (flashcache_wt_get_dev(ti, argv[0], &dmc->disk_dev, 
+			       dmc->disk_devname, ti->len)) {
+		ti->error = "flashcache-wt: Disk device lookup failed";
 		goto bad1;
 	}
-
-	r = dm_get_device(ti, argv[1], 0, 0,
-			  dm_table_get_mode(ti->table), &dmc->cache_dev);
-	if (r) {
+	if (flashcache_wt_get_dev(ti, argv[1], &dmc->cache_dev,
+			       dmc->cache_devname, 0)) {
 		ti->error = "flashcache-wt: Cache device lookup failed";
 		goto bad2;
 	}
@@ -901,7 +1021,18 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	if (argc >= 3) {
-		if (sscanf(argv[2], "%u", &dmc->block_size) != 1) {
+		if (sscanf(argv[2], "%d", &dmc->write_around_mode) != 1) {
+			ti->error = "flashcache-wt: Invalid mode";
+			r = -EINVAL;
+			goto bad4;
+		}
+	} else
+		dmc->assoc = DEFAULT_CACHE_ASSOC;
+	
+
+
+	if (argc >= 4) {
+		if (sscanf(argv[3], "%u", &dmc->block_size) != 1) {
 			ti->error = "flashcache-wt: Invalid block size";
 			r = -EINVAL;
 			goto bad4;
@@ -917,8 +1048,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->block_mask = dmc->block_size - 1;
 
 	/* dmc->size is specified in sectors here, and converted to blocks below */
-	if (argc >= 4) {
-		if (sscanf(argv[3], "%lu", &dmc->size) != 1) {
+	if (argc >= 5) {
+		if (sscanf(argv[4], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache-wt: Invalid cache size";
 			r = -EINVAL;
 			goto bad4;
@@ -927,8 +1058,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	}
 
-	if (argc >= 5) {
-		if (sscanf(argv[4], "%u", &dmc->assoc) != 1) {
+	if (argc >= 6) {
+		if (sscanf(argv[5], "%u", &dmc->assoc) != 1) {
 			ti->error = "flashcache-wt: Invalid cache associativity";
 			r = -EINVAL;
 			goto bad4;
@@ -941,7 +1072,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		}
 	} else
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
-	
+
 	/* 
 	 * Convert size (in sectors) to blocks.
 	 * Then round size (in blocks now) down to a multiple of associativity 
@@ -997,7 +1128,9 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	/* Initialize the cache structs */
 	for (i = 0; i < dmc->size ; i++) {
 		dmc->cache[i].dbn = 0;
+#ifdef FLASHCACHE_WT_CHECKSUMS
 		dmc->cache[i].checksum = 0;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 		dmc->cache_state[i] = INVALID;
 	}
 
@@ -1016,9 +1149,11 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->cached_blocks = 0;
 	dmc->cache_wr_replace = 0;
 
+#ifdef FLASHCACHE_WT_CHECKSUMS
 	dmc->checksum_store = 0;
 	dmc->checksum_valid = 0;
 	dmc->checksum_invalid = 0;
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 	
 	ti->split_io = dmc->block_size;
 	ti->private = dmc;
@@ -1059,13 +1194,21 @@ cache_dtr(struct dm_target *ti)
 		else
 			read_hit_pct = 0;
 		DMINFO("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
+#ifdef FLASHCACHE_WT_CHECKSUMS
 		DMINFO("\tcache hits(%lu), cache hit percent (%d)\n"	\
 		       "\treplacement(%lu), write replacement(%lu)\n"	\
 		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
 		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
 		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
-		       dmc->rd_invalidates, dmc->wr_invalidates, dmc->checksum_store, 
-		       dmc->checksum_valid, dmc->checksum_invalid);
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+#else
+		DMINFO("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates);
+#endif
 		if (dmc->size > 0)
 			cache_pct = (dmc->cached_blocks * 100) / dmc->size;
 		else 
@@ -1102,13 +1245,62 @@ flashcache_wt_status_info(struct cache_c *dmc, status_type_t type,
 	else
 		read_hit_pct = 0;
 	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
-	DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n" \
-	       "\treplacement(%lu), write replacement(%lu)\n" \
-	       "\tread invalidates(%lu), write invalidates(%lu)\n" \
-	       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
-	       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
-	       dmc->rd_invalidates, dmc->wr_invalidates, dmc->checksum_store, 
-	       dmc->checksum_valid, dmc->checksum_invalid);
+
+#ifdef FLASHCACHE_WT_CHECKSUMS
+	if (dmc->write_around_mode == 0) {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n"	\
+		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates, 
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+	} else {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), read invalidates(%lu) write invalidates(%lu)\n"	\
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n"	\
+		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, 
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes,
+		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
+	}
+#else  /* FLASHCACHE_WT_CHECKSUMS */
+	if (dmc->write_around_mode == 0) {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
+		       dmc->rd_invalidates, dmc->wr_invalidates, 
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes);
+	} else {
+		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
+		       "\treplacement(%lu), read invalidates(%lu) write invalidates(%lu)\n"	\
+		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
+		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
+		       "\tcache reads(%lu), cache writes(%lu)\n",
+		       dmc->cache_hits, read_hit_pct, dmc->replace, 
+		       dmc->rd_invalidates, dmc->wr_invalidates,
+		       dmc->uncached_reads, dmc->uncached_writes,
+		       dmc->disk_reads, dmc->disk_writes,
+		       dmc->cache_reads, dmc->cache_writes);
+	}
+#endif /* FLASHCACHE_WT_CHECKSUMS */
 }
 
 static void
@@ -1124,8 +1316,11 @@ flashcache_wt_status_table(struct cache_c *dmc, status_type_t type,
 	else 
 		cache_pct = 0;
 	DMEMIT("conf:\n"\
+	       "\tssd dev (%s), disk dev (%s) mode (%s)\n"              \
 	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
+	       dmc->cache_devname, dmc->disk_devname,
+	       ((dmc->write_around_mode) ? "WRITE_AROUND" : "WRITETHROUGH"),
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->size, dmc->cached_blocks, cache_pct);
@@ -1173,6 +1368,26 @@ static struct target_type cache_target = {
 	.status = cache_status,
 };
 
+static int 
+flashcache_wt_version_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq, "Flashcache_wt Version : %s\n", flashcache_wt_sw_version);
+	return 0;
+}
+
+static int 
+flashcache_wt_version_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, &flashcache_wt_version_show, NULL);
+}
+
+static struct file_operations flashcache_wt_version_operations = {
+	.open		= flashcache_wt_version_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /*
  * Initiate a cache target.
  */
@@ -1203,6 +1418,18 @@ flashcache_wt_init(void)
 	if (r < 0) {
 		DMERR("cache: register failed %d", r);
 	}
+
+	printk("flashcache-wt: %s initialized\n", flashcache_wt_sw_version);
+	
+#ifdef CONFIG_PROC_FS
+	{
+		struct proc_dir_entry *entry;
+		
+		entry = create_proc_entry("flashcache_wt_version", 0, NULL);
+		if (entry)
+			entry->proc_fops =  &flashcache_wt_version_operations;
+	}
+#endif
 	return r;
 }
 
@@ -1222,6 +1449,10 @@ flashcache_wt_exit(void)
 #endif
 	jobs_exit();
 	destroy_workqueue(_kcached_wq);
+#ifdef CONFIG_PROC_FS
+	remove_proc_entry("flashcache_wt_version", NULL);
+#endif
+
 }
 
 module_init(flashcache_wt_init);

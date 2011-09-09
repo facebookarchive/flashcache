@@ -41,9 +41,14 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-b block size] [ -s cache size] cachedev ssd_devname disk_devname\n", pname);
-	fprintf(stderr, "Usage : %s Default units for -b, -s are sectors, use k/m/g allowed\n",
+	fprintf(stderr, "Usage: %s [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
+	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
+		pname);
+#ifdef COMMIT_REV
+	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
+#endif
 	exit(1);
 }
 
@@ -72,7 +77,7 @@ get_block_size(char *s)
 			fprintf (stderr, "%s: Unknown block size type %c\n", pname, *c);
 			exit (1);
 	}
-	if (size & ~size) {
+	if (size & (size - 1)) {
 		fprintf(stderr, "%s: Block size must be a power of 2\n", pname);
 		exit(1);
 	}
@@ -115,7 +120,7 @@ module_loaded(void)
 	int found = 0;
 	
 	fp = fopen("/proc/modules", "ro");
-	while (fgets(line, 8192, fp)) {
+	while (fgets(line, 8190, fp)) {
 		char *s;
 		
 		s = strtok(line, " ");
@@ -124,6 +129,7 @@ module_loaded(void)
 			break;
 		}
 	}
+	fclose(fp);
 	return found;
 }
 
@@ -132,20 +138,30 @@ load_module(void)
 {
 	FILE *fp;
 	char line[8192];
-	int found = 0;
 
-	if (module_loaded()) {
-		if (verbose)
-			fprintf(stderr, "Flashcache Module already loaded\n");		
-		return;
-	}
-	if (verbose)
-		fprintf(stderr, "Loading Flashcache Module\n");
-	system("modprobe flashcache");
 	if (!module_loaded()) {
-		fprintf(stderr, "Could not load Flashcache Module\n");
-		exit(1);
+		if (verbose)
+			fprintf(stderr, "Loading Flashcache Module\n");
+		system("modprobe flashcache");
+		if (!module_loaded()) {
+			fprintf(stderr, "Could not load Flashcache Module\n");
+			exit(1);
+		}
+	} else if (verbose)
+			fprintf(stderr, "Flashcache Module already loaded\n");
+	fp = fopen("/proc/flashcache/flashcache_version", "ro");
+	fgets(line, 8190, fp);
+	if (fgets(line, 8190, fp)) {
+		if (verbose)
+			fprintf(stderr, "version string \"%s\"\n", line);
+#ifdef COMMIT_REV
+		if (!strstr(line, COMMIT_REV)) {
+			fprintf(stderr, "Flashcache revision doesn't match tool revision.\n");
+			exit(1);
+		}
+#endif
 	}
+	fclose(fp);
 }
 
 main(int argc, char **argv)
@@ -154,18 +170,29 @@ main(int argc, char **argv)
 	char *disk_devname, *ssd_devname, *cachedev;
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t cache_devsize, disk_devsize;
-	sector_t block_size = 0, cache_size = 0;
+	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
 	int cache_sectorsize;
+	int associativity = 512;
+	int ret;
+	int cache_mode = -1;
+	char *cache_mode_str;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:v")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:m:va:p:")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
 			break;
+		case 'a':
+			associativity = atoi(optarg);
+			break;
 		case 'b':
 			block_size = get_block_size(optarg);
 			/* Block size should be a power of 2 */
+                        break;
+		case 'm':
+			md_block_size = get_block_size(optarg);
+			/* MD block size should be a power of 2 */
                         break;
 		case 'v':
 			verbose = 1;
@@ -173,14 +200,31 @@ main(int argc, char **argv)
 		case 'f':
 			force = 1;
                         break;
+		case 'p':
+			if (strcmp(optarg, "back") == 0) {
+				cache_mode = FLASHCACHE_WRITE_BACK;
+				cache_mode_str = "WRITE_BACK";
+			} else if (strcmp(optarg, "thru") == 0) {
+				cache_mode = FLASHCACHE_WRITE_THROUGH;
+				cache_mode_str = "WRITE_THROUGH";
+			} else if (strcmp(optarg, "around") == 0) {
+				cache_mode = FLASHCACHE_WRITE_AROUND;
+				cache_mode_str = "WRITE_AROUND";
+			} else
+				usage(pname);
+                        break;			
 		case '?':
 			usage(pname);
 		}
 	}
+	if (cache_mode == -1)
+		usage(pname);
 	if (optind == argc)
 		usage(pname);
 	if (block_size == 0)
 		block_size = 8;		/* 4KB default blocksize */
+	if (md_block_size == 0)
+		md_block_size = 8;	/* 4KB default blocksize */
 	cachedev = argv[optind++];
 	if (optind == argc)
 		usage(pname);
@@ -188,9 +232,14 @@ main(int argc, char **argv)
 	if (optind == argc)
 		usage(pname);
 	disk_devname = argv[optind];
-	printf("cachedev %s, ssd_devname %s, disk_devname %s\n", 
-	       cachedev, ssd_devname, disk_devname);
-	printf("block_size %lu, cache_size %lu\n", block_size, cache_size);
+	printf("cachedev %s, ssd_devname %s, disk_devname %s cache mode %s\n", 
+	       cachedev, ssd_devname, disk_devname, cache_mode_str);
+	if (cache_mode == FLASHCACHE_WRITE_BACK)
+		printf("block_size %lu, md_block_size %lu, cache_size %lu\n", 
+		       block_size, md_block_size, cache_size);
+	else
+		printf("block_size %lu, cache_size %lu\n", 
+		       block_size, cache_size);
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -233,17 +282,18 @@ main(int argc, char **argv)
 			pname, ssd_devname);
 		exit(1);		
 	}
-	if (!force && cache_sectorsize != 512) {
-		fprintf(stderr, "%s: Format SSD device (%s) to 512b sectors (%d) !\n", 
-			pname, ssd_devname, cache_sectorsize);
+	if (md_block_size > 0 &&
+	    md_block_size * 512 < cache_sectorsize) {
+		fprintf(stderr, "%s: SSD device (%s) sector size (%d) cannot be larger than metadata block size (%d) !\n",
+		        pname, ssd_devname, cache_sectorsize, md_block_size * 512);
 		exit(1);				
 	}
-	if (cache_size && cache_devsize > cache_devsize) {
+	if (cache_size && cache_size > cache_devsize) {
 		fprintf(stderr, "%s: Cache size is larger than ssd size %lu/%lu\n", 
 			pname, cache_size, cache_devsize);
 		exit(1);		
 	}
-	if (!force && cache_devsize > disk_devsize) {
+	if (!force && cache_size > disk_devsize) {
 		char input;
 			
 		fprintf(stderr, "Size of cache volume (%s) is larger than disk volume (%s)\n",
@@ -256,22 +306,21 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s 2 %lu ",
-		disk_devsize, disk_devname, ssd_devname, block_size);
-	if (cache_size > 0) {
-		char cache_size_str[4096];
-		
-		sprintf(cache_size_str, "%lu ", cache_size);
-		strcat(dmsetup_cmd, cache_size_str);
-	}
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %d 2 %lu %lu %lu %lu"
+		" | dmsetup create %s",
+		disk_devsize, disk_devname, ssd_devname, cache_mode, block_size, 
+		cache_size, associativity, md_block_size, 
+		cachedev);
+
 	/* Go ahead and create the cache.
 	 * XXX - Should use the device mapper library for this.
 	 */
-	strcat(dmsetup_cmd, "| dmsetup create ");
-	strcat(dmsetup_cmd, cachedev);
-	strcat(dmsetup_cmd, "\n");
 	load_module();
 	if (verbose)
-		fprintf(stderr, "Creating FlashCache Volume : %s", dmsetup_cmd);
-	system(dmsetup_cmd);
+		fprintf(stderr, "Creating FlashCache Volume : \"%s\"\n", dmsetup_cmd);
+	ret = system(dmsetup_cmd);
+	if (ret) {
+		fprintf(stderr, "%s failed\n", dmsetup_cmd);
+		exit(1);
+	}
 }
