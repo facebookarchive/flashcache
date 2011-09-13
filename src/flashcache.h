@@ -25,7 +25,7 @@
 #ifndef FLASHCACHE_H
 #define FLASHCACHE_H
 
-#define FLASHCACHE_VERSION		3
+#define FLASHCACHE_VERSION		2
 
 #define DEV_PATHLEN	128
 
