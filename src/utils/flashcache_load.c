@@ -137,8 +137,8 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((sb->cache_version < 3) && (argc == 1)) {
-		fprintf(stderr, "%s: Upgrading older superblock format, please supply cachedev name\n", pname);
+	if ((strncmp(sb->cache_devname, ssd_devname, DEV_PATHLEN) == 0) && (argc == 2)) {
+		fprintf(stderr, "%s: Upgrading older v2 superblock format, please supply cachedev virtual device name\n", pname);
 		usage(pname);
 	}
 	

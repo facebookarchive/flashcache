@@ -362,9 +362,9 @@ struct flash_superblock {
 	u_int32_t block_size;	/* Cache block size */
 	u_int32_t assoc;	/* Cache associativity */
 	u_int32_t cache_sb_state;	/* Clean shutdown ? */
-	char cache_devname[DEV_PATHLEN]; /* Contains dm_vdev name as of v3 */
+	char cache_devname[DEV_PATHLEN]; /* Contains dm_vdev name as of v2 modifications */
 	sector_t cache_devsize;
-	char disk_devname[DEV_PATHLEN]; /* underlying block device UUID */
+	char disk_devname[DEV_PATHLEN]; /* underlying block device name (use UUID paths!) */
 	sector_t disk_devsize;
 	u_int32_t cache_version;
 	u_int32_t md_block_size;
