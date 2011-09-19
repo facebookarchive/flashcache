@@ -271,7 +271,6 @@ struct cache_c {
 	int sysctl_fast_remove;
 	int sysctl_cache_all;
 	int sysctl_fallow_clean_speed;
-	int sysctl_fallow_clean_speed_new;
 	int sysctl_fallow_delay;
 };
 
