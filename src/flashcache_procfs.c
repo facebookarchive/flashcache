@@ -166,11 +166,11 @@ flashcache_fallow_clean_speed_sysctl(ctl_table *table, int write,
 	proc_dointvec(table, write, buffer, length, ppos);
 #endif
 	if (write) {
-		if (dmc->sysctl_fallow_clean_speed_new >= fallow_clean_speed_min &&
-		    dmc->sysctl_fallow_clean_speed_new <= fallow_clean_speed_max) {
-			dmc->sysctl_fallow_clean_speed = dmc->sysctl_fallow_clean_speed_new;
-		} else
-			dmc->sysctl_fallow_clean_speed_new = dmc->sysctl_fallow_clean_speed;
+		if (dmc->sysctl_fallow_clean_speed < fallow_clean_speed_min)
+			dmc->sysctl_fallow_clean_speed = fallow_clean_speed_min;
+
+		if (dmc->sysctl_fallow_clean_speed > fallow_clean_speed_max)
+			dmc->sysctl_fallow_clean_speed = fallow_clean_speed_max;
 	}
 	return 0;
 }
@@ -191,9 +191,12 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
         proc_dointvec(table, write, buffer, length, ppos);
 #endif
 	if (write) {
-		if (dmc->sysctl_dirty_thresh > DIRTY_THRESH_MAX ||
-		    dmc->sysctl_dirty_thresh < DIRTY_THRESH_MIN)
-			dmc->sysctl_dirty_thresh = DIRTY_THRESH_DEF;
+		if (dmc->sysctl_dirty_thresh > DIRTY_THRESH_MAX)
+			dmc->sysctl_dirty_thresh = DIRTY_THRESH_MAX;
+
+		if (dmc->sysctl_dirty_thresh < DIRTY_THRESH_MIN)
+			dmc->sysctl_dirty_thresh = DIRTY_THRESH_MIN;
+
 		dmc->dirty_thresh_set = 
 			(dmc->assoc * dmc->sysctl_dirty_thresh) / 100;
 	}
