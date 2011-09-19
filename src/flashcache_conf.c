@@ -305,11 +305,11 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 	header->size = dmc->size;
 	header->assoc = dmc->assoc;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
-	strncpy(header->cache_devname, dmc->cache_devname, DEV_PATHLEN);
+	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	header->cache_version = dmc->on_ssd_version;
-
+	
 	DPRINTK("Store metadata to disk: block size(%u), md block size(%u), cache size(%llu)" \
 	        "associativity(%u)",
 	        header->block_size, header->md_block_size, header->size,
@@ -569,12 +569,16 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	header->size = dmc->size;
 	header->assoc = dmc->assoc;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
-	strncpy(header->cache_devname, dmc->cache_devname, DEV_PATHLEN);
+	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	dmc->on_ssd_version = header->cache_version = FLASHCACHE_VERSION;
 	where.sector = 0;
 	where.count = dmc->md_block_size;
+	
+	printk("flashcache-dbg: cachedev check - %s %s", header->cache_devname,
+				dmc->dm_vdevname);
+	
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
 #else
@@ -807,7 +811,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 	header->assoc = dmc->assoc;
 	header->cache_sb_state = CACHE_MD_STATE_DIRTY;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
-	strncpy(header->cache_devname, dmc->cache_devname, DEV_PATHLEN);
+	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	header->cache_version = dmc->on_ssd_version;
@@ -876,11 +880,14 @@ flashcache_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
  * Construct a cache mapping.
  *  arg[0]: path to source device
  *  arg[1]: path to cache device
- *  arg[2]: cache persistence (if set, cache conf is loaded from disk)
+ *  arg[2]: md virtual device name
+ *  arg[3]: cache mode (from flashcache.h)
+ *  arg[4]: cache persistence (if set, cache conf is loaded from disk)
  * Cache configuration parameters (if not set, default values are used.
- *  arg[3]: cache block size (in sectors)
- *  arg[4]: cache size (in blocks)
- *  arg[5]: cache associativity
+ *  arg[5]: cache block size (in sectors)
+ *  arg[6]: cache size (in blocks)
+ *  arg[7]: cache associativity
+ *  arg[8]: md block size (in sectors)
  */
 int 
 flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
@@ -914,13 +921,18 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad2;
 	}
 
+	if (sscanf(argv[2], "%s", &dmc->dm_vdevname) != 1) {
+		ti->error = "flashcache: Virtual device name lookup failed";
+		goto bad3;
+	}
+	
 	r = flashcache_kcached_init(dmc);
 	if (r) {
 		ti->error = "Failed to initialize kcached";
 		goto bad3;
 	}
 
-	if (sscanf(argv[2], "%u", &dmc->cache_mode) != 1) {
+	if (sscanf(argv[3], "%u", &dmc->cache_mode) != 1) {
 		ti->error = "flashcache: sscanf failed, invalid cache mode";
 		r = -EINVAL;
 		goto bad3;
@@ -938,8 +950,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	 * Maybe this should really be moved to the end of the param list ?
 	 */
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 4) {
-			if (sscanf(argv[3], "%u", &persistence) != 1) {
+		if (argc >= 5) {
+			if (sscanf(argv[4], "%u", &persistence) != 1) {
 				ti->error = "flashcache: sscanf failed, invalid cache persistence";
 				r = -EINVAL;
 				goto bad3;
@@ -962,8 +974,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	} else
 		persistence = CACHE_CREATE;
 
-	if (argc >= 5) {
-		if (sscanf(argv[4], "%u", &dmc->block_size) != 1) {
+	if (argc >= 6) {
+		if (sscanf(argv[5], "%u", &dmc->block_size) != 1) {
 			ti->error = "flashcache: Invalid block size";
 			r = -EINVAL;
 			goto bad3;
@@ -981,8 +993,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->block_mask = dmc->block_size - 1;
 
 	/* dmc->size is specified in sectors here, and converted to blocks later */
-	if (argc >= 6) {
-		if (sscanf(argv[5], "%lu", &dmc->size) != 1) {
+	if (argc >= 7) {
+		if (sscanf(argv[6], "%lu", &dmc->size) != 1) {
 			ti->error = "flashcache: Invalid cache size";
 			r = -EINVAL;
 			goto bad3;
@@ -992,8 +1004,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (!dmc->size)
 		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 
-	if (argc >= 7) {
-		if (sscanf(argv[6], "%u", &dmc->assoc) != 1) {
+	if (argc >= 8) {
+		if (sscanf(argv[7], "%u", &dmc->assoc) != 1) {
 			ti->error = "flashcache: Invalid cache associativity";
 			r = -EINVAL;
 			goto bad3;
@@ -1013,8 +1025,8 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 8) {
-			if (sscanf(argv[7], "%u", &dmc->md_block_size) != 1) {
+		if (argc >= 9) {
+			if (sscanf(argv[8], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
 				goto bad3;
@@ -1353,11 +1365,11 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	else
 		cache_mode = "WRITE_AROUND";
 	DMINFO("conf:\n"						\
-	       "\tssd dev (%s), disk dev (%s) cache mode(%s)\n"		\
+	       "\tvirt dev (%s), ssd dev (%s), disk dev (%s) cache mode(%s)\n"		\
 	       "\tcapacity(%luM), associativity(%u), data block size(%uK) metadata block size(%ub)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n" \
 	       "\tdirty blocks(%d), dirty percent(%d)\n",
-	       dmc->cache_devname, dmc->disk_devname,
+	       dmc->dm_vdevname, dmc->cache_devname, dmc->disk_devname,
 	       cache_mode,
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
@@ -1674,7 +1686,7 @@ flashcache_status(struct dm_target *ti, status_type_t type,
 
 static struct target_type flashcache_target = {
 	.name   = "flashcache",
-	.version= {1, 0, 1},
+	.version= {1, 0, 3},
 	.module = THIS_MODULE,
 	.ctr    = flashcache_ctr,
 	.dtr    = flashcache_dtr,
