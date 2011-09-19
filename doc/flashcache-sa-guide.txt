@@ -53,12 +53,15 @@ sectors instead. The name of the device created is "cachedev".
 
 flashcache_load : Load an existing writeback cache volume.
 
-flashcache_load cachedevname ssd_devname disk_devname
+flashcache_load ssd_devname [cachedev_name]
 
 Example :
-flashcache_load cachedev /dev/sdc /dev/sdb
-Load the existing writeback cache on /dev/sdc, calling the flashcache volume
-cachedev.
+flashcache_load /dev/sd
+Load the existing writeback cache on /dev/sdc, using the virtual
+cachedev_name from when the device was created. If you're upgrading from
+an older flashcache device format that didn't store the cachedev name
+internally, or you want to change the cachedev name use, you can specify
+it as an optional second argument to flashcache_load.
 
 flashcache_destroy : Destroy an existing flashcache. All data will be lost !!!
 
@@ -256,7 +259,7 @@ table_file : other cache args (format below). If this is omitted, dmsetup
 	     attempts to read this from stdin.
 
 table_file format :
-0 <disk dev sz in sectors> flashcache <dm virtual dev> <ssd dev> <dm virtual name> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
+0 <disk dev sz in sectors> flashcache <disk dev> <ssd dev> <dm virtual name> <cache mode> <flashcache cmd> <blksize in sectors> [size of cache in sectors] [cache set size]
 
 cache mode:
 	   1: Write Back
@@ -286,7 +289,7 @@ cache set size:
 
 Example :
 
-echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 1 2 8 522000000 | dmsetup create cachedev
+echo 0 `blockdev --getsize /dev/cciss/c0d1p2` flashcache /dev/cciss/c0d1p2 /dev/fioa2 cachedev 1 2 8 522000000 | dmsetup create cachedev
 
 This creates a writeback cache device called "cachedev" (/dev/mapper/cachedev)
 with a 4KB blocksize to cache /dev/cciss/c0d1p2 on /dev/fioa2.
