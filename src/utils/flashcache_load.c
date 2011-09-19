@@ -45,7 +45,7 @@ int verbose = 0;
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s ssd_devname [cachedev]\n", pname);
 #ifdef COMMIT_REV
 	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
 #endif
@@ -113,15 +113,12 @@ main(int argc, char **argv)
 			usage(pname);
 		}
 	}
-	if (optind == argc)
+
+	if ((argc < 2) || (argc > 3)) {
 		usage(pname);
-	cachedev = argv[optind++];
-	if (optind == argc)
-		usage(pname);
+	}
+	
 	ssd_devname = argv[optind++];
-	if (optind == argc)
-		usage(pname);
-	disk_devname = argv[optind];
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -139,6 +136,20 @@ main(int argc, char **argv)
 		fprintf(stderr, "%s: Invalid Flashcache superblock %s\n", pname, ssd_devname);
 		exit(1);
 	}
+
+	if ((strncmp(sb->cache_devname, ssd_devname, DEV_PATHLEN) == 0) && (argc == 2)) {
+		fprintf(stderr, "%s: Upgrading older v2 superblock format, please supply cachedev virtual device name\n", pname);
+		usage(pname);
+	}
+	
+	// switch to new vdev name if requested by load command
+	if (argc == 3) {
+		cachedev = argv[optind];
+	} else {
+		cachedev = sb->cache_devname;
+	}
+	disk_devname = sb->disk_devname;
+
 	disk_fd = open(disk_devname, O_RDONLY);
 	if (disk_fd < 0) {
 		fprintf(stderr, "%s: Failed to open %s\n", pname, disk_devname);
@@ -151,16 +162,6 @@ main(int argc, char **argv)
 	if (ioctl(disk_fd, BLKGETSIZE, &disk_devsize) < 0) {
 		fprintf(stderr, "%s: Cannot get disk size %s\n", pname, disk_devname);
 		exit(1);				
-	}
-	if (strncmp(disk_devname, sb->disk_devname, DEV_PATHLEN)) {
-		fprintf(stderr, "%s: Disk volume mismatch, expect %s, given %s\n", 
-			pname, sb->disk_devname, disk_devname);
-		exit(1);		
-	}
-	if (strncmp(ssd_devname, sb->cache_devname, DEV_PATHLEN)) {
-		fprintf(stderr, "%s: Cache volume mismatch, expect %s, given %s\n", 
-			pname, sb->cache_devname, ssd_devname);
-		exit(1);
 	}
 	if (cache_devsize != sb->cache_devsize) {
 		fprintf(stderr, "%s: Cache size mismatch, expect %lu, given %lu\n", 
@@ -178,8 +179,8 @@ main(int argc, char **argv)
 	 * XXX - Should use the device mapper library for this.
 	 */
 	cache_mode = FLASHCACHE_WRITE_BACK;
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %d 1 | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cache_mode, cachedev);
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 1 | dmsetup create %s",
+		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, cachedev);
 	load_module();
 	if (verbose)
 		fprintf(stderr, "Loading FlashCache Volume : %s\n", dmsetup_cmd);

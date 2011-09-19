@@ -41,7 +41,7 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
@@ -306,10 +306,10 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %d 2 %lu %lu %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %lu %lu"
 		" | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cache_mode, block_size, 
-		cache_size, associativity, md_block_size, 
+		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
+		cache_size, associativity, md_block_size,
 		cachedev);
 
 	/* Go ahead and create the cache.
