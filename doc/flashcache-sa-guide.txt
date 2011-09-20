@@ -14,11 +14,28 @@ Flashcache has been tested on variety of kernels between 2.6.18 and 2.6.38.
 If you'd like to build and use it on a newer kernel, please send me an email 
 and I can help. I will not support older than 2.6.18 kernels.
 
+
+Choice of Caching Modes : 
+=========================
+Writethrough - safest, all writes are cached to ssd but also written to disk
+immediately.  If your ssd has slower write performance than your disk (likely
+for early generation SSDs purchased in 2008-2010), this may limit your system 
+write performance.  All disk reads are cached (tunable).  
+
+Writearound - again, very safe, writes are not written to ssd but directly to
+disk.  Disk blocks will only be cached after they are read.  All disk reads
+are cached (tunable).
+
+Writeback - fastest but less safe.  Writes only go to the ssd initially, and
+based on various policies are written to disk later.  All disk reads are
+cached (tunable).  
+    
 Cache Persistence :
 =================
 Writethru and Writearound caches are not persistent across a device removal
 or a reboot. Only Writeback caches are persistent across device removals
-and reboots.
+and reboots.  This reinforces 'writeback is fastest', 'writethrough is safest'.
+
 
 Cache creation and loading using the flashcache utilities :
 =========================================================
@@ -28,9 +45,12 @@ a simpler interface to create, load and destroy flashcache volumes.
 It is expected that the majority of users can use these utilities
 instead of using dmsetup.
 
+
+
 flashcache_create : Create a new flashcache volume.
 
-flashcache_create -p back|around|thru [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+flashcache_create [-v] -p back|around|thru [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+-v : verbose.
 -p : cache mode (writeback/writethrough/writearound).
 -s : cache size. Optional. If this is not specified, the entire ssd device
      is used as cache. The default units is sectors. But you can specify 
@@ -51,7 +71,9 @@ flashcache_create -p thru -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
 Same as above but creates a write through cache with units specified in 
 sectors instead. The name of the device created is "cachedev".
 
-flashcache_load : Load an existing writeback cache volume.
+
+
+flashcache_load : Load an existing writeback cache volume.  
 
 flashcache_load ssd_devname [cachedev_name]
 
@@ -63,13 +85,20 @@ an older flashcache device format that didn't store the cachedev name
 internally, or you want to change the cachedev name use, you can specify
 it as an optional second argument to flashcache_load.
 
-flashcache_destroy : Destroy an existing flashcache. All data will be lost !!!
+For writethrough and writebehind caches flashcache_load is not needed; flashcache_create 
+should be used each time.
+
+
+flashcache_destroy : Destroy an existing writeback flashcache. All data will be lost !!!
 
 flashcache_destroy ssd_devname
 
 Example :
 flashcache_destroy /dev/sdc
 Destroy the existing cache on /dev/sdc. All data is lost !!!
+
+For writethrough and writebehind caches this is not necessary.
+
 
 Removing a flashcache volume :
 ============================
@@ -84,7 +113,10 @@ cleaned synchronously (again see the note about "fast_remove" in the
 sysctls section).
 
 For writethrough and writearound caches, the device removal or reboot
-results in the cache being destroyed. 
+results in the cache being destroyed.  However, there is no harm is
+doing a 'dmsetup remove' to tidy up before boot, and indeed
+this will be needed if you ever need to unload the flashcache kernel
+module (for example to load an new version into a running system).
 
 Example:
 dmsetup remove cachedev
@@ -157,7 +189,7 @@ FlashCache Sysctls :
 Flashcache sysctls operate on a per-cache device basis. A couple of examples
 first.
 
-Sysctls for a Write around mode cache :
+Sysctls for a writearound or writethrough mode cache :
 cache device /dev/ram3, disk device /dev/ram4
 
 dev.flashcache.ram3+ram4.cache_all = 1
@@ -168,7 +200,7 @@ dev.flashcache.ram3+ram4.max_pids = 100
 dev.flashcache.ram3+ram4.do_pid_expiry = 0
 dev.flashcache.ram3+ram4.io_latency_hist = 0
 
-Sysctls for a Write back mode cache :
+Sysctls for a writeback mode cache :
 cache device /dev/sdb, disk device /dev/cciss/c0d2
 
 dev.flashcache.sdb+c0d2.fallow_delay = 900
@@ -190,7 +222,8 @@ dev.flashcache.sdb+c0d2.io_latency_hist = 0
 Sysctls common to all cache modes :
 
 dev.flashcache.<cachedev>.cache_all:
-	Cache everything (default).
+	Global caching mode to cache everything or cache nothing.
+	See section on Caching Controls. Defaults to "cache everything".
 dev.flashcache.<cachedev>.zero_stats:
 	Zero stats (once).
 dev.flashcache.<cachedev>.reclaim_policy:
@@ -204,12 +237,12 @@ dev.flashcache.<cachedev>.io_latency_hist:
 	Setting this to 1 enables computation of IO latencies.
 	The IO latency histogram is appended to 'dmsetup status'.
 (There is little reason to tune these)
-dev.flashcache.<cachedev>.pid_expiry_secs:
-	Set the expiry on the pid white/black lists.
 dev.flashcache.<cachedev>.max_pids:
 	Maximum number of pids in the white/black lists.
 dev.flashcache.<cachedev>.do_pid_expiry:
 	Enable expiry on the list of pids in the white/black lists.
+dev.flashcache.<cachedev>.pid_expiry_secs:
+	Set the expiry on the pid white/black lists.
 
 Sysctls for writeback mode only :
 
@@ -233,9 +266,7 @@ dev.flashcache.<cachedev>.dirty_thresh_pct = 20
 	and reduces block overwrites, but increases the blocks
 	available for read caching.
 dev.flashcache.<cachedev>.stop_sync = 0
-	Stop the sync in progress.dev.flashcache.cache_all:
-	Global caching mode to cache everything or cache nothing.
-	See section on Caching Controls. Defaults to "cache everything".
+	Stop the sync in progress.
 dev.flashcache.<cachedev>.do_sync = 0
 	Schedule cleaning of all dirty blocks in the cache. 
 (There is little reason to tune these)
@@ -367,6 +398,7 @@ corrupt data here.
 You can work around this by setting file permissions on files in 
 the flashcache volume appropriately.
 
+
 Tuning XFS for better flashcache performance :
 ============================================
 If you run XFS/Flashcache, it is worth tuning XFS' allocation group
@@ -447,3 +479,9 @@ agsize % C = (1 - (1/agcount))*C
 agsize * agcount ~= V
 
 Works just as well as the formula above.
+
+
+Further Information
+===================
+Git repository         : https://github.com/facebook/flashcache/
+Developer mailing list : http://groups.google.com/group/flashcache-dev/
