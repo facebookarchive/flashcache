@@ -10,7 +10,7 @@ UTILS := /sbin/flashcache_load /sbin/flashcache_create /sbin/flashcache_destroy
 all: install
 
 .PHONY: install
-install: build $(UTILS)
+install: build utils
 	dkms install -m flashcache -v $(COMMIT_REV)
 
 .PHONY: build
