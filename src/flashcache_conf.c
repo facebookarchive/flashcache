@@ -1214,143 +1214,71 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	
 	DMINFO("stats: \n\treads(%lu), writes(%lu)", stats->reads, stats->writes);
 
-#ifdef FLASHCACHE_DO_CHECKSUMS
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\twrite hits(%lu) write hit percent(%d)\n"	\
 		       "\tdirty write hits(%lu) dirty write hit percent(%d)\n" \
 		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu), read invalidates(%lu)\n" \
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\twrite invalidates(%lu), read invalidates(%lu)\n" ,
+		       stats->read_hits, read_hit_pct,
+		       stats->write_hits, write_hit_pct,
+		       stats->dirty_write_hits, dirty_write_hit_pct,
+		       stats->replace, stats->wr_replace, 
+		       stats->wr_invalidates, stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMINFO("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
+#endif
+		DMINFO("\tpending enqueues(%lu), pending inval(%lu)\n"	\
 		       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 		       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
 		       "\tcleanings(%lu) fallow cleanings(%lu)\n"	\
-		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->dirty_write_hits, dirty_write_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
+		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n",
 		       stats->enqueues, stats->pending_inval,
 		       stats->md_write_dirty, stats->md_write_clean,
 		       stats->md_write_batch, stats->md_ssd_writes,
 		       stats->cleanings, stats->fallow_cleanings, 
-		       stats->noroom, stats->front_merge, stats->back_merge,
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
+		       stats->noroom, stats->front_merge, stats->back_merge);
 	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
 		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\twrite hits(%lu) write hit percent(%d)\n"	\
 		       "\treplacement(%lu)\n"				\
-		       "\twrite invalidates(%lu), read invalidates(%lu)\n" \
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n"				\
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+		       "\twrite invalidates(%lu), read invalidates(%lu)\n",
 		       stats->read_hits, read_hit_pct,
 		       stats->write_hits, write_hit_pct,
 		       stats->replace,
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
+		       stats->wr_invalidates, stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMINFO("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
+#endif
+		DMINFO("\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\tno room(%lu)\n",
 		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
+		       stats->noroom);
 	} else 	{	/* WRITE_AROUND */
 		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\treplacement(%lu)\n"				\
-		       "\tinvalidates(%lu)\n"				\
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n"				\
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+		       "\tinvalidates(%lu)\n",
 		       stats->read_hits, read_hit_pct,
 		       stats->replace,
-		       stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
-#else
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\twrite hits(%lu) write hit percent(%d)\n"	\
-		       "\tdirty write hits(%lu) dirty write hit percent(%d)\n" \
-		       "\treplacement(%lu) write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu) read invalidates(%lu)\n" \
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tmetadata dirties(%lu) metadata cleans(%lu)\n" \
-		       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-		       "\tcleanings(%lu) fallow cleanings(%lu)\n"	\
-		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->dirty_write_hits, dirty_write_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->md_write_dirty, stats->md_write_clean,
-		       stats->md_write_batch, stats->md_ssd_writes,
-		       stats->cleanings, stats->fallow_cleanings, 
-		       stats->noroom, stats->front_merge, stats->back_merge,
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
-		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\twrite hits(%lu) write hit percent(%d)\n"	\
-		       "\treplacement(%lu)\n"				\
-		       "\twrite invalidates(%lu) read invalidates(%lu)\n" \
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n"				\
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->replace,
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else {	/* WRITE_AROUND */
-		DMINFO("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\treplacement(%lu))\n"				\
-		       "\tinvalidates(%lu)\n"				\
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n"				\
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->replace,
-		       stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
+		       stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMINFO("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
 #endif
+		DMINFO("\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\tno room(%lu)\n",
+		       stats->enqueues, stats->pending_inval,
+		       stats->noroom);
+	}
+	/* All modes */
+        DMINFO("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
+               "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
+               "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+               stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
+               stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+               stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->size > 0) {
 		dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
 		cache_pct = ((u_int64_t)dmc->cached_blocks * 100) / dmc->size;
@@ -1462,143 +1390,71 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", 
 	       stats->reads, stats->writes);
 
-#ifdef FLASHCACHE_DO_CHECKSUMS
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\twrite hits(%lu) write hit percent(%d)\n"	\
 		       "\tdirty write hits(%lu) dirty write hit percent(%d)\n" \
 		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu), read invalidates(%lu)\n" \
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\twrite invalidates(%lu), read invalidates(%lu)\n",
+		       stats->read_hits, read_hit_pct,
+		       stats->write_hits, write_hit_pct,
+		       stats->dirty_write_hits, dirty_write_hit_pct,
+		       stats->replace, stats->wr_replace, 
+		       stats->wr_invalidates, stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMEMIT("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
+#endif
+		DMEMIT("\tpending enqueues(%lu), pending inval(%lu)\n"	\
 		       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 		       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
 		       "\tcleanings(%lu) fallow cleanings(%lu)\n"	\
-		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->dirty_write_hits, dirty_write_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
+		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n",
 		       stats->enqueues, stats->pending_inval,
 		       stats->md_write_dirty, stats->md_write_clean,
 		       stats->md_write_batch, stats->md_ssd_writes,
 		       stats->cleanings, stats->fallow_cleanings, 
-		       stats->noroom, stats->front_merge, stats->back_merge,
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
+		       stats->noroom, stats->front_merge, stats->back_merge);
 	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
 		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\twrite hits(%lu) write hit percent(%d)\n"	\
 		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu), read invalidates(%lu)\n" \
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n" \
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+		       "\twrite invalidates(%lu), read invalidates(%lu)\n",
 		       stats->read_hits, read_hit_pct,
 		       stats->write_hits, write_hit_pct,
 		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else {	/* WRITE_AROUND */
-		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\tinvalidates(%lu)\n" \
-		       "\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n" \
-		       "\tpending enqueues(%lu), pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n" \
-		       "\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->rd_invalidates,
-		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
-#else
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\twrite hits(%lu) write hit percent(%d)\n"	\
-		       "\tdirty write hits(%lu) dirty write hit percent(%d)\n" \
-		       "\treplacement(%lu) write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu) read invalidates(%lu)\n" \
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tmetadata dirties(%lu) metadata cleans(%lu)\n" \
-		       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
-		       "\tcleanings(%lu) fallow cleanings(%lu)\n"	\
-		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->dirty_write_hits, dirty_write_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->md_write_dirty, stats->md_write_clean,
-		       stats->md_write_batch, stats->md_ssd_writes,
-		       stats->cleanings, stats->fallow_cleanings, 
-		       stats->noroom, stats->front_merge, stats->back_merge,
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
-		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\twrite hits(%lu) write hit percent(%d)\n"	\
-		       "\treplacement(%lu) write replacement(%lu)\n"	\
-		       "\twrite invalidates(%lu) read invalidates(%lu)\n" \
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n" \
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->write_hits, write_hit_pct,
-		       stats->replace, stats->wr_replace, 
-		       stats->wr_invalidates, stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else {	/* WRITE_AROUND */
-		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
-		       "\treplacement(%lu))\n"	\
-		       "\tinvalidates(%lu)\n" \
-		       "\tpending enqueues(%lu) pending inval(%lu)\n"	\
-		       "\tno room(%lu)\n" \
-		       "\tdisk reads(%lu) disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
-		       "\tuncached reads(%lu) uncached writes(%lu), uncached IO requeue(%lu)\n" \
-		       "\tpid_adds(%lu) pid_dels(%lu) pid_drops(%lu) pid_expiry(%lu)",
-		       stats->read_hits, read_hit_pct,
-		       stats->replace,
-		       stats->rd_invalidates,
-		       stats->enqueues, stats->pending_inval,
-		       stats->noroom, 
-		       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
-		       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
-		       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
+		       stats->wr_invalidates, stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMEMIT("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
 #endif
+		DMEMIT("\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\tno room(%lu)\n",
+		       stats->enqueues, stats->pending_inval,
+		       stats->noroom);
+	} else {	/* WRITE_AROUND */
+		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
+		       "\treplacement(%lu), write replacement(%lu)\n"	\
+		       "\tinvalidates(%lu)\n",
+		       stats->read_hits, read_hit_pct,
+		       stats->replace, stats->wr_replace, 
+		       stats->rd_invalidates);
+#ifdef FLASHCACHE_DO_CHECKSUMS
+		DMEMIT("\tchecksum store(%ld), checksum valid(%ld), checksum invalid(%ld)\n",
+		       stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
+#endif
+		DMEMIT("\tpending enqueues(%lu), pending inval(%lu)\n"	\
+		       "\tno room(%lu)\n",
+		       stats->enqueues, stats->pending_inval,
+		       stats->noroom);
+	}
+	/* All modes */
+	DMEMIT("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
+	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
+	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
+	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->sysctl_io_latency_hist) {
 		int i;
 		
