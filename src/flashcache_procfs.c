@@ -741,142 +741,57 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 		write_hit_pct = 0;
 		dirty_write_hit_pct = 0;
 	}
-	seq_printf(seq, "reads=%lu writes=%lu \n", stats->reads, stats->writes);
+	seq_printf(seq, "reads=%lu writes=%lu \n", 
+		   stats->reads, stats->writes);
+	seq_printf(seq, "read_hits=%lu read_hit_percent=%d ", 
+		   stats->read_hits, read_hit_pct);
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK || dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
+		seq_printf(seq, "write_hits=%lu write_hit_percent=%d ", 
+		   	   stats->write_hits, write_hit_pct);
+	}
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+		seq_printf(seq, "dirty_write_hits=%lu dirty_write_hit_percent=%d ",
+			   stats->dirty_write_hits, dirty_write_hit_pct);
+	}
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK || dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
+		seq_printf(seq, "replacement=%lu write_replacement=%lu ",
+			   stats->replace, stats->wr_replace);
+		seq_printf(seq,  "write_invalidates=%lu read_invalidates=%lu ",
+			   stats->wr_invalidates, stats->rd_invalidates);
+	} else {	/* WRITE_AROUND */
+		seq_printf(seq, "replacement=%lu ",
+			   stats->replace);
+		seq_printf(seq, "read_invalidates=%lu ",
+			   stats->rd_invalidates);
+	}
 #ifdef FLASHCACHE_DO_CHECKSUMS
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d write_hits=%lu write_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct,
-			   stats->write_hits, write_hit_pct);
-		seq_printf(seq, "dirty_write_hits=%lu dirty_write_hit_percent=%d ",
-			   stats->dirty_write_hits, dirty_write_hit_pct);
-		seq_printf(seq, "replacement=%lu write_replacement=%lu ",
-			   stats->replace, stats->wr_replace);
-		seq_printf(seq,  "write_invalidates=%lu read_invalidates=%lu ",
-			   stats->wr_invalidates, stats->rd_invalidates);
-		seq_printf(seq,  "checksum_store=%ld checksum_valid=%ld checksum_invalid=%ld ",
-			   stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
-		seq_printf(seq,  "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "metadata_dirties=%lu metadata_cleans=%lu ",
-			   stats->md_write_dirty, stats->md_write_clean);
-		seq_printf(seq, "metadata_batch=%lu metadata_ssd_writes=%lu ",
-			   stats->md_write_batch, stats->md_ssd_writes);
-		seq_printf(seq, "cleanings=%lu fallow_cleanings=%lu ",
-			   stats->cleanings, stats->fallow_cleanings);
-		seq_printf(seq, "no_room=%lu front_merge=%lu back_merge=%lu ",
-			   stats->noroom, stats->front_merge, stats->back_merge);
-		seq_printf(seq,  "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq,  "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeus);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct);
-		seq_printf(seq, "write_hits=%lu write_hit_percent=%d ",
-			   stats->write_hits, write_hit_pct);
-		seq_printf(seq, "replacement=%lu write_replacement=%lu ",
-			   stats->replace, stats->wr_replace);
-		seq_printf(seq, "write_invalidates=%lu read_invalidates=%lu ",
-			   stats->wr_invalidates, stats->rd_invalidates);
-		seq_printf(seq, "checksum_store=%ld checksum_valid=%ld checksum_invalid=%ld ",
-			   stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
-		seq_printf(seq, "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "no room(%lu) ",
-			   stats->noroom);
-		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else {	/* WRITE_AROUND */
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct);
-		seq_printf(seq, "replacement=%lu ",
-			   stats->replace);
-		seq_printf(seq, "read_invalidates=%lu ",
-			   stats->rd_invalidates);
-		seq_printf(seq, "checksum_store=%ld checksum_valid=%ld checksum_invalid=%ld ",
-			   stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
-		seq_printf(seq, "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "no room(%lu) ",
-			   stats->noroom);
-		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
-#else
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d write_hits=%lu write_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct,
-			   stats->write_hits, write_hit_pct);
-		seq_printf(seq, "dirty_write_hits=%lu dirty_write_hit_percent=%d ",
-			   stats->dirty_write_hits, dirty_write_hit_pct);
-		seq_printf(seq, "replacement=%lu write_replacement=%lu ",
-			   stats->replace, stats->wr_replace);
-		seq_printf(seq,  "write_invalidates=%lu read_invalidates=%lu ",
-			   stats->wr_invalidates, stats->rd_invalidates);
-		seq_printf(seq,  "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "metadata_dirties=%lu metadata_cleans=%lu ",
-			   stats->md_write_dirty, stats->md_write_clean);
-		seq_printf(seq, "metadata_batch=%lu metadata_ssd_writes=%lu ",
-			   stats->md_write_batch, stats->md_ssd_writes);
-		seq_printf(seq, "cleanings=%lu fallow_cleanings=%lu ",
-			   stats->cleanings, stats->fallow_cleanings);
-		seq_printf(seq, "no_room=%lu front_merge=%lu back_merge=%lu ",
-			   stats->noroom, stats->front_merge, stats->back_merge);
-		seq_printf(seq,  "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq,  "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct);
-		seq_printf(seq, "write_hits=%lu write_hit_percent=%d ",
-			   stats->write_hits, write_hit_pct);
-		seq_printf(seq, "replacement=%lu write_replacement=%lu ",
-			   stats->replace, stats->wr_replace);
-		seq_printf(seq, "write_invalidates=%lu read_invalidates=%lu ",
-			   stats->wr_invalidates, stats->rd_invalidates);
-		seq_printf(seq, "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "no room(%lu) ",
-			   stats->noroom);
-		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	} else {	/* WRITE_AROUND */
-		seq_printf(seq, "read_hits=%lu read_hit_percent=%d ",
-			   stats->read_hits, read_hit_pct);
-		seq_printf(seq, "replacement=%lu ",
-			   stats->replace);
-		seq_printf(seq, "read_invalidates=%lu ",
-			   stats->rd_invalidates);
-		seq_printf(seq, "pending_enqueues=%lu pending_inval=%lu ",
-			   stats->enqueues, stats->pending_inval);
-		seq_printf(seq, "no room(%lu) ",
-			   stats->noroom);
-		seq_printf(seq, "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
-			   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
-		seq_printf(seq, "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
-			   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
-		seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
-			   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
-	}
+	seq_printf(seq,  "checksum_store=%ld checksum_valid=%ld checksum_invalid=%ld ",
+		stats->checksum_store, stats->checksum_valid, stats->checksum_invalid);
 #endif
+	seq_printf(seq,  "pending_enqueues=%lu pending_inval=%lu ",
+		   stats->enqueues, stats->pending_inval);
+
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) { 
+		seq_printf(seq, "metadata_dirties=%lu metadata_cleans=%lu ",
+			   stats->md_write_dirty, stats->md_write_clean);
+		seq_printf(seq, "metadata_batch=%lu metadata_ssd_writes=%lu ",
+			   stats->md_write_batch, stats->md_ssd_writes);
+		seq_printf(seq, "cleanings=%lu fallow_cleanings=%lu ",
+			   stats->cleanings, stats->fallow_cleanings);
+	}
+	seq_printf(seq, "no_room=%lu ",
+		   stats->noroom);
+
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+ 		seq_printf(seq, "front_merge=%lu back_merge=%lu ",
+			   stats->front_merge, stats->back_merge);
+	}
+	seq_printf(seq,  "disk_reads=%lu disk_writes=%lu ssd_reads=%lu ssd_writes=%lu ",
+		   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
+	seq_printf(seq,  "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
+		   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
+	seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
+		   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	return 0;
 }
 
