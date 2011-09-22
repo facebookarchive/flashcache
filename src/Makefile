@@ -5,6 +5,17 @@ KERNEL_TREE ?= /lib/modules/$(KERNEL_SOURCE_VERSION)/build
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\""
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux 
 
+# Check for RHEL/CentOS
+RHEL5_VER ?= $(shell grep 5.[0-9] /etc/redhat-release)
+RHEL5_SETUP :=
+ifneq "$(RHEL5_VER)" ""
+	RHEL5_SETUP := rhel5-setup
+	RHEL5_SPEC := /usr/src/redhat/SPECS/kernel.spec
+	RHEL5_TREE := /usr/src/redhat/BUILD/kernel-2.6.18/linux-$(shell uname -r).$(shell uname -i)
+	RHEL5_SRC := /usr/src/kernels/$(shell uname -r)-$(shell uname -i)
+	KERNEL_TREE := $(RHEL5_TREE)
+endif
+
 obj-m += flashcache.o
 flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o flashcache_procfs.o
 
@@ -12,7 +23,7 @@ flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashca
 all: modules utils
 
 .PHONY:    modules
-modules:
+modules: $(RHEL5_SETUP)
 	make -C $(KERNEL_TREE) M=$(PWD) modules V=0
 
 .PHONY:    utils
@@ -33,7 +44,15 @@ utils_install: utils
 install: modules_install utils_install
 
 .PHONY: clean
-
 clean:
 	make -C $(KERNEL_TREE) M=$(PWD) clean
 	make -C utils clean
+
+.PHONY: rhel5-setup
+rhel5-setup: $(RHEL5_TREE)
+	make -C $(RHEL5_TREE) oldconfig ; \
+	make -C $(RHEL5_TREE) prepare modules_prepare
+	ln -s -f $(RHEL5_SRC)/Module.symvers $(RHEL5_TREE)/Module.symvers
+
+$(RHEL5_TREE):
+	rpmbuild -bp --target=`uname -m` $(RHEL5_SPEC) 2>&1 | tee `dirname $(RHEL5_SPEC)`/prep.log
