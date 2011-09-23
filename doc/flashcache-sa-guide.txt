@@ -248,8 +248,8 @@ Sysctls for writeback mode only :
 
 dev.flashcache.<cachedev>.fallow_delay = 900
 	In seconds. Clean dirty blocks that have been "idle" (not 
-	read or written) for fallow_delay seconds. Default is 60 
-	seconds. 
+	read or written) for fallow_delay seconds. Default is 15
+	minutes. 
 	Setting this to 0 disables idle cleaning completely.
 dev.flashcache.<cachedev>.fallow_clean_speed = 2
 	The maximum number of "fallow clean" disk writes per set 

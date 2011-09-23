@@ -127,11 +127,11 @@ int dm_io_async_bvec(unsigned int num_regions,
  * that lie fallow in the cache and thus are candidates for cleaning. 
  * Note that we could have such fallow blocks in sets where the dirty blocks 
  * is under the configured threshold.
- * The hands are spaced 60 seconds apart (one sweep runs every 60 seconds).
- * The interval is configurable via a sysctl. 
+ * The hands are spaced fallow_delay seconds apart (one sweep runs every 
+ * fallow_delay seconds).  The interval is configurable via a sysctl. 
  * Blocks are moved to DIRTY_FALLOW_1, if they are found to be in DIRTY_FALLOW_1
- * for 60 seconds or more, they are moved to DIRTY_FALLOW_1 | DIRTY_FALLOW_2, at
- * which point they are eligible for cleaning. Of course any intervening use
+ * for fallow_delay seconds or more, they are moved to DIRTY_FALLOW_1 | DIRTY_FALLOW_2, 
+ * at which point they are eligible for cleaning. Of course any intervening use
  * of the block within the interval turns off these 2 bits.
  * 
  * Cleaning of these blocks happens from the flashcache_clean_set() function.

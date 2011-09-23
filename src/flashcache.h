@@ -333,7 +333,7 @@ enum {
 #define DIRTY			0x0040	/* Dirty, needs writeback to disk */
 /*
  * Old and Dirty blocks are cleaned with a Clock like algorithm. The leading hand
- * marks DIRTY_FALLOW_1. 60 seconds (default) later, the trailing hand comes along and
+ * marks DIRTY_FALLOW_1. 900 seconds (default) later, the trailing hand comes along and
  * marks DIRTY_FALLOW_2 if DIRTY_FALLOW_1 is already set. If the block was used in the 
  * interim, (DIRTY_FALLOW_1|DIRTY_FALLOW_2) is cleared. Any block that has both 
  * DIRTY_FALLOW_1 and DIRTY_FALLOW_2 marked is considered old and is eligible 
