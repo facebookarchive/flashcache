@@ -27,16 +27,14 @@ Boot from Flashcache
 --------------------
 If you have initramfs-tools, then flashcache utils and modules can be installed into the initramfs.
  - Follow Installation section above.
+ - Install flashcache into the boot environment:
+   make install
  - Install flashcache boot support:
    make -f Makefile.dkms boot_conf
  - Edit your /etc/fstab and /boot/grub/grub.cfg to change the root device to the flashcache device you intend to use.
    (ex: /dev/mapper/fc-root)
- - Boot off a live CD like the Ubuntu desktop installer.
- - Mount your root device (mount /dev/root-partition /mnt)
- - cd to your flashcache source directory, and install flashcache into the boot environment. (make install)
- - Unmount your root device (umount /mnt)
  - Create flashcache device backed by your root device. I recommend using the UUID path in case device renaming occurs:
-   flashcache_create -p back fc-root /dev/ssd_device /dev/disk/by-uuid/root_device_uuid
+   flashcache_create -l -p back fc-root /dev/ssd_device /dev/disk/by-uuid/root_device_uuid
  - Reboot!
 
 Known Issues:

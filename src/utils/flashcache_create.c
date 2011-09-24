@@ -41,7 +41,7 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-l] [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
@@ -176,9 +176,10 @@ main(int argc, char **argv)
 	int ret;
 	int cache_mode = -1;
 	char *cache_mode_str;
-	
+	int lazy = 0;
+
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:m:va:p:")) != -1) {
+	while ((c = getopt(argc, argv, "lfs:b:m:va:p:")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
@@ -200,6 +201,9 @@ main(int argc, char **argv)
 		case 'f':
 			force = 1;
                         break;
+		case 'l':
+			lazy = 1;
+			break;
 		case 'p':
 			if (strcmp(optarg, "back") == 0) {
 				cache_mode = FLASHCACHE_WRITE_BACK;
@@ -240,7 +244,7 @@ main(int argc, char **argv)
 	else
 		printf("block_size %lu, cache_size %lu\n", 
 		       block_size, cache_size);
-	cache_fd = open(ssd_devname, O_RDONLY);
+	cache_fd = open(ssd_devname, O_RDWR);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
 		exit(1);
@@ -306,6 +310,46 @@ main(int argc, char **argv)
 			exit(1);
 		}
 	}
+
+	if (lazy) {
+		struct flash_superblock *header = (struct flash_superblock *)malloc(512);
+
+		if (!header) {
+			fprintf(stderr, "Failed to allocate superblock memory\n");
+			exit(1);		
+		}
+
+		memset(header, 0, 512);
+
+		if (!cache_size)
+			cache_size = cache_devsize;
+
+		cache_size = (cache_size / block_size) - 512;
+		cache_size = (cache_size / associativity) * associativity;
+
+		header->size = cache_size;
+		header->block_size = block_size;
+		header->md_block_size = md_block_size;
+		header->assoc = associativity;
+		header->cache_sb_state = CACHE_MD_STATE_DIRTY;
+		strncpy(header->disk_devname, disk_devname, DEV_PATHLEN);
+		strncpy(header->cache_devname, cachedev, DEV_PATHLEN);
+		header->disk_devsize = disk_devsize;
+		header->cache_devsize = cache_devsize;
+		header->cache_version = FLASHCACHE_VERSION;
+	
+        	lseek(cache_fd, 0, SEEK_SET);
+		if (write(cache_fd, header, 512) < 0) {
+			fprintf(stderr, "Cannot write Flashcache superblock to %s\n", ssd_devname);
+			exit(1);
+		}
+	
+		if (verbose)
+			fprintf(stderr, "Wrote FlashCache superblock to %s\n", ssd_devname);
+
+		exit(0);
+	}
+
 	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %lu %lu"
 		" | dmsetup create %s",
 		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
