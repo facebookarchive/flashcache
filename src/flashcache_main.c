@@ -1055,6 +1055,14 @@ flashcache_can_clean(struct cache_c *dmc,
 		     struct cache_set *cache_set,
 		     int nr_writes)
 {
+	/* If we are not allowing dirty data, maybe we have some already and 
+	 * somebody's turned this switch off.   Try to clean with no limits.
+	 */
+	if (dmc->sysctl_allow_dirty_data == 0) 
+		return 1;
+	/* Only allow cleaning if we have not exceed the per-cache and global
+	 * writes.  If we have, cleaning will be delayed. 
+	 */
 	return ((cache_set->clean_inprog + nr_writes) < dmc->max_clean_ios_set &&
 		(nr_writes + dmc->clean_inprog) < dmc->max_clean_ios_total);
 }
@@ -1134,7 +1142,7 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	}
 	if (nr_writes > 0)
 		cache_set->fallow_next_cleaning = jiffies + HZ / dmc->sysctl_fallow_clean_speed;
-	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
+	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||				/* WOSDEBUG : are we comparing number dirty in a set with a cache-global threshold? */
 	    !flashcache_can_clean(dmc, cache_set, nr_writes))
 		goto out;
 	/*
@@ -1538,13 +1546,12 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 		atomic_inc(&dmc->nr_jobs);
 		dmc->flashcache_stats.ssd_writes++;
 		job->action = WRITECACHE; 
-		if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+		if (dmc->cache_mode == FLASHCACHE_WRITE_BACK && dmc->sysctl_allow_dirty_data) {
 			/* Write data to the cache */		
 			dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
 		} else {
-			VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH);
 			/* Write data to both disk and cache */
 			dm_io_async_bvec(2, 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
@@ -1599,14 +1606,13 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			atomic_inc(&dmc->nr_jobs);
 			dmc->flashcache_stats.ssd_writes++;
 			job->action = WRITECACHE;
-			if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+			if (dmc->cache_mode == FLASHCACHE_WRITE_BACK && dmc->sysctl_allow_dirty_data) {
 				/* Write data to the cache */
 				dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
 						 bio->bi_io_vec + bio->bi_idx,
 						 flashcache_io_callback, job);
 				flashcache_clean_set(dmc, index / dmc->assoc);
 			} else {
-				VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH);
 				/* Write data to both disk and cache */
 				dmc->flashcache_stats.disk_writes++;
 				dm_io_async_bvec(2, 

@@ -264,6 +264,7 @@ struct cache_c {
 	int sysctl_io_latency_hist;
 	int sysctl_do_sync;
 	int sysctl_stop_sync;
+	int sysctl_allow_dirty_data;
 	int sysctl_dirty_thresh;
 	int sysctl_pid_do_expiry;
 	int sysctl_max_pids;
@@ -437,6 +438,7 @@ struct cache_md_block_head {
 #define DIRTY_THRESH_MIN	10
 #define DIRTY_THRESH_MAX	90
 #define DIRTY_THRESH_DEF	20
+#define ALLOW_DIRTY_DATA  	1
 
 #define MAX_CLEAN_IOS_SET	2
 #define MAX_CLEAN_IOS_TOTAL	4

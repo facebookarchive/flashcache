@@ -112,7 +112,8 @@ flashcache_sync_sysctl(ctl_table *table, int write,
 	proc_dointvec(table, write, buffer, length, ppos);
 #endif
 	if (write) {
-		if (dmc->sysctl_do_sync) {
+		/* If either of these two changed, we should consider syncing */
+		if (dmc->sysctl_do_sync || dmc->sysctl_allow_dirty_data == 0) {
 			dmc->sysctl_stop_sync = 0;
 			cancel_delayed_work(&dmc->delayed_clean);
 			flush_scheduled_work();
@@ -212,7 +213,7 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	16
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	17
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -254,6 +255,18 @@ static struct flashcache_writeback_sysctl_table {
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "allow_dirty_data",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &flashcache_sync_sysctl,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.strategy	= &sysctl_intvec,
+#endif
 		},
 		{
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
@@ -569,6 +582,8 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_do_sync;
 	else if (strcmp(vars->procname, "stop_sync") == 0) 
 		return &dmc->sysctl_stop_sync;
+	else if (strcmp(vars->procname, "allow_dirty_data") == 0) 
+		return &dmc->sysctl_allow_dirty_data;
 	else if (strcmp(vars->procname, "dirty_thresh_pct") == 0) 
 		return &dmc->sysctl_dirty_thresh;
 	else if (strcmp(vars->procname, "max_clean_ios_total") == 0) 
