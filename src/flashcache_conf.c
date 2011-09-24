@@ -921,7 +921,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto bad2;
 	}
 
-	if (sscanf(argv[2], "%s", &dmc->dm_vdevname) != 1) {
+	if (sscanf(argv[2], "%s", (char *)&dmc->dm_vdevname) != 1) {
 		ti->error = "flashcache: Virtual device name lookup failed";
 		goto bad3;
 	}
