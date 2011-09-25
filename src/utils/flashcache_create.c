@@ -312,6 +312,11 @@ main(int argc, char **argv)
 	}
 
 	if (lazy) {
+		if (cache_mode != FLASHCACHE_WRITE_BACK) {
+			fprintf(stderr, "Lazy initialization can only be used with writeback mode!\n");
+			exit(1);
+		}
+
 		struct flash_superblock *header = (struct flash_superblock *)malloc(512);
 
 		if (!header) {
