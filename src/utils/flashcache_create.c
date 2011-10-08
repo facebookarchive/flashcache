@@ -44,7 +44,7 @@ usage(char *pname)
 	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
-	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, use k/m/g allowed. Default associativity is 512\n",
+	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, or specify in k/M/G. Default associativity is 512.\n",
 		pname);
 #ifdef COMMIT_REV
 	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
@@ -100,11 +100,17 @@ get_cache_size(char *s)
 			size = (size * 1024) / 512;
 			break;
 		case 'm':
+		case 'M':
 			size = (size * 1024 * 1024) / 512;
 			break;
 		case 'g': 
+		case 'G': 
 			size = (size * 1024 * 1024 * 1024) / 512;
 			break;
+		case 't': 
+		case 'T': 
+			/* Cache size in terabytes?  You lucky people! */
+			size = (size * 1024 * 1024 * 1024 * 1024) / 512;
 		default:
 			fprintf (stderr, "%s: Unknown cache size type %c\n", pname, *c);
 			exit (1);
@@ -204,7 +210,8 @@ main(int argc, char **argv)
 			if (strcmp(optarg, "back") == 0) {
 				cache_mode = FLASHCACHE_WRITE_BACK;
 				cache_mode_str = "WRITE_BACK";
-			} else if (strcmp(optarg, "thru") == 0) {
+			} else if ((strcmp(optarg, "thru") == 0) ||
+				   (strcmp(optarg, "through") == 0)) {
 				cache_mode = FLASHCACHE_WRITE_THROUGH;
 				cache_mode_str = "WRITE_THROUGH";
 			} else if (strcmp(optarg, "around") == 0) {
