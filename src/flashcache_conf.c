@@ -1137,6 +1137,7 @@ init:
 	dmc->sysctl_io_latency_hist = 0;
 	dmc->sysctl_do_sync = 0;
 	dmc->sysctl_stop_sync = 0;
+	dmc->sysctl_allow_dirty_data = ALLOW_DIRTY_DATA;
 	dmc->sysctl_pid_do_expiry = 0;
 	dmc->sysctl_max_pids = MAX_PIDS;
 	dmc->sysctl_pid_expiry_secs = PID_EXPIRY_SECS;

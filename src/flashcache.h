@@ -264,6 +264,7 @@ struct cache_c {
 	int sysctl_io_latency_hist;
 	int sysctl_do_sync;
 	int sysctl_stop_sync;
+	int sysctl_allow_dirty_data;
 	int sysctl_dirty_thresh;
 	int sysctl_pid_do_expiry;
 	int sysctl_max_pids;
@@ -333,7 +334,7 @@ enum {
 #define DIRTY			0x0040	/* Dirty, needs writeback to disk */
 /*
  * Old and Dirty blocks are cleaned with a Clock like algorithm. The leading hand
- * marks DIRTY_FALLOW_1. 60 seconds (default) later, the trailing hand comes along and
+ * marks DIRTY_FALLOW_1. 900 seconds (default) later, the trailing hand comes along and
  * marks DIRTY_FALLOW_2 if DIRTY_FALLOW_1 is already set. If the block was used in the 
  * interim, (DIRTY_FALLOW_1|DIRTY_FALLOW_2) is cleared. Any block that has both 
  * DIRTY_FALLOW_1 and DIRTY_FALLOW_2 marked is considered old and is eligible 
@@ -437,6 +438,7 @@ struct cache_md_block_head {
 #define DIRTY_THRESH_MIN	10
 #define DIRTY_THRESH_MAX	90
 #define DIRTY_THRESH_DEF	20
+#define ALLOW_DIRTY_DATA  	1
 
 #define MAX_CLEAN_IOS_SET	2
 #define MAX_CLEAN_IOS_TOTAL	4
