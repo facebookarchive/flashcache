@@ -111,6 +111,7 @@ get_cache_size(char *s)
 		case 'T': 
 			/* Cache size in terabytes?  You lucky people! */
 			size = (size * 1024 * 1024 * 1024 * 1024) / 512;
+			break;
 		default:
 			fprintf (stderr, "%s: Unknown cache size type %c\n", pname, *c);
 			exit (1);
