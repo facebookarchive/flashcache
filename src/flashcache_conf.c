@@ -1569,7 +1569,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 			flashcache_sync_all(dmc);
 		} else {
 			/* Needed to abort any in-progress cleanings, leave blocks DIRTY */
-			atomic_set(&dmc->remove_in_prog, 1);
+			atomic_set(&dmc->remove_in_prog, FAST_REMOVE);
 			printk(KERN_ALERT "Fast flashcache remove Skipping cleaning of %d blocks", 
 			       dmc->nr_dirty);
 		}
