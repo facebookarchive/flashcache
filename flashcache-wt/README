@@ -1,7 +1,9 @@
 flashcache-wt is a simple, non-persistent write-through and write-around
 flashcache.
 
-It is a separate code base from flashcache (which is write back only).
+It is a separate code base from flashcache.  Note that flashcache itself, which
+is more configurable, now has options for writeback, writethrough and writearound
+caching.
 
 Notes :
 -----

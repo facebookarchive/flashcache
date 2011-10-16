@@ -212,7 +212,7 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	16
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	17
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -384,6 +384,15 @@ static struct flashcache_writeback_sysctl_table {
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
 			.procname	= "fallow_delay",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "skip_seq_thresh",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
@@ -595,6 +604,8 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_fallow_clean_speed;
 	else if (strcmp(vars->procname, "fallow_delay") == 0) 
 		return &dmc->sysctl_fallow_delay;
+	else if (strcmp(vars->procname, "skip_seq_thresh") == 0) 
+		return &dmc->sysctl_skip_seq_thresh;
 	VERIFY(0);
 	return NULL;
 }

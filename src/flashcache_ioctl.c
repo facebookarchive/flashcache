@@ -305,9 +305,10 @@ flashcache_pid_expiry_all_locked(struct cache_c *dmc)
  * The Rules (in decreasing order of priority) :
  * 1) Check the pid (thread id) against the list. 
  * 2) Check the tgid against the list, then check for exceptions within the tgid.
+ * 3) Possibly don't cache sequential i/o.
  */
 int
-flashcache_uncacheable(struct cache_c *dmc)
+flashcache_uncacheable(struct cache_c *dmc, struct bio *bio)
 {
 	int dontcache;
 	
@@ -327,9 +328,18 @@ flashcache_uncacheable(struct cache_c *dmc)
 		 */
 		if (dontcache) {
 			if (flashcache_find_pid_locked(dmc, current->pid, 
-						       FLASHCACHE_WHITELIST))
+						       FLASHCACHE_WHITELIST)) {
 				dontcache = 0;
+				goto out;
+			}
 		}
+
+		/* Finally, if we are neither in a whitelist or a blacklist,
+		 * do a final check to see if this is sequential i/o.  If
+		 * the relevant sysctl is set, we will skip it.
+		 */
+		dontcache = skip_sequential_io(dmc, bio);
+			
 	} else { /* cache nothing */
 		/* If the tid has been whitelisted, we cache 
 		   This overrides everything else */
@@ -349,10 +359,141 @@ flashcache_uncacheable(struct cache_c *dmc)
 						       FLASHCACHE_BLACKLIST))
 				dontcache = 1;
 		}
+		/* No sequential handling here.  If we add to the whitelist,
+		 * everything is cached, sequential or not.
+  		 */
 	}
 out:
 	return dontcache;
 }
+
+/* Below 2 functions manage the LRU cache of recent IO 'flows'.  
+ * A sequential IO will only take up one slot (we keep updating the 
+ * last sector seen) but random IO will quickly fill multiple slots.  
+ * We allocate the LRU cache from a small fixed sized buffer at startup. 
+ */
+void
+seq_io_remove_from_lru(struct cache_c *dmc, struct sequential_io *seqio)
+{
+	if (seqio->prev != NULL) 
+		seqio->prev->next = seqio->next;
+	else {
+		VERIFY(dmc->seq_io_head == seqio);
+		dmc->seq_io_head = seqio->next;
+	}
+	if (seqio->next != NULL)
+		seqio->next->prev = seqio->prev;
+	else {
+		VERIFY(dmc->seq_io_tail == seqio);
+		dmc->seq_io_tail = seqio->prev;
+	}
+}
+
+void
+seq_io_move_to_lruhead(struct cache_c *dmc, struct sequential_io *seqio)
+{
+	if (likely(seqio->prev != NULL || seqio->next != NULL))
+		seq_io_remove_from_lru(dmc, seqio);
+	/* Add it to LRU head */
+	if (dmc->seq_io_head != NULL)
+		dmc->seq_io_head->prev = seqio;
+	seqio->next = dmc->seq_io_head;
+	seqio->prev = NULL;
+	dmc->seq_io_head = seqio;
+}
+       
+
+/* Look for and maybe skip sequential i/o.  
+ *
+ * Since          performance(SSD) >> performance(HDD) for random i/o,
+ * but            performance(SSD) ~= performance(HDD) for sequential i/o,
+ * it may be optimal to save (presumably expensive) SSD cache space for random i/o only.
+ *
+ * We don't know whether a single request is part of a big sequential read/write.
+ * So all we can do is monitor a few requests, and try to spot if they are
+ * continuations of a recent 'flow' of i/o.  After several contiguous blocks we consider
+ * it sequential.
+ *
+ * You can tune the threshold with the sysctl sequential_threshold (e.g. 64 = 64kb),
+ * or cache all i/o (without checking whether random or sequential) with sequential_threshold = 0.
+ */
+int 
+skip_sequential_io (struct cache_c *dmc, struct bio *bio)
+{
+	struct sequential_io *seqio;
+	int sequential = 0;	/* Saw > 1 in a row? */
+	int skip       = 0;	/* Enough sequential to hit the threshold */
+
+	/* sysctl skip sequential threshold = 0 : disable, cache all sequential and random i/o.
+	 * This is the default. */	 
+	if (dmc->sysctl_skip_seq_thresh == 0)  {
+		skip = 0;	/* Redundant, for emphasis */
+		goto out;
+	}
+
+	/* locking : We are already within cache_spin_lock so we don't
+	 * need to explicitly lock our data structures.
+ 	 */
+
+	/* Is it a continuation of recent i/o?  Try to find a match.  */
+	DPRINTK("skip_sequential_io: searching for %ld", bio->bi_sector);
+	/* search the list in LRU order so single sequential flow hits first slot */
+	for (seqio = dmc->seq_io_head; seqio != NULL && sequential == 0; seqio = seqio->next) { 
+
+		if (bio->bi_sector == seqio->most_recent_sector) {
+			/* Reread or write same sector again.  Ignore but move to head */
+			DPRINTK("skip_sequential_io: repeat");
+			sequential = 1;
+			if (dmc->seq_io_head != seqio)
+				seq_io_move_to_lruhead(dmc, seqio);
+		}
+		/* i/o to one block more than the previous i/o = sequential */	
+		else if (bio->bi_sector == seqio->most_recent_sector + dmc->block_size) {
+			DPRINTK("skip_sequential_io: sequential found");
+			/* Update stats.  */
+			seqio->most_recent_sector = bio->bi_sector;
+			seqio->sequential_count++;
+			sequential = 1;
+
+			/* And move to head, if not head already */
+			if (dmc->seq_io_head != seqio)
+				seq_io_move_to_lruhead(dmc, seqio);
+
+			/* Is it now sequential enough to be sure? (threshold expressed in kb) */
+			if (to_bytes(seqio->sequential_count * dmc->block_size) > dmc->sysctl_skip_seq_thresh * 1024) {
+				DPRINTK("skip_sequential_io: Sequential i/o detected, seq count now %lu", 
+					seqio->sequential_count);
+				/* Sufficiently sequential */
+				skip = 1;
+			}
+		}
+	}
+	if (!sequential) {
+		/* Record the start of some new i/o, maybe we'll spot it as 
+		 * sequential soon.  */
+		DPRINTK("skip_sequential_io: concluded that its random i/o");
+
+		seqio = dmc->seq_io_tail;
+		seq_io_move_to_lruhead(dmc, seqio);
+
+		DPRINTK("skip_sequential_io: fill in data");
+
+		/* Fill in data */
+		seqio->most_recent_sector = bio->bi_sector;
+		seqio->sequential_count	  = 1;
+	}
+out:
+	DPRINTK("skip_sequential_io: dump of queue forwards");
+	for (seqio = dmc->seq_io_head; seqio != NULL; seqio = seqio->next) 
+		DPRINTK("sector %ld occurrences %ld", seqio->most_recent_sector, seqio->sequential_count);
+	DPRINTK("skip_sequential_io: dump of queue backwards");
+	for (seqio = dmc->seq_io_tail; seqio != NULL; seqio = seqio->prev) 
+		DPRINTK("sector %ld occurrences %ld", seqio->most_recent_sector, seqio->sequential_count);
+
+	DPRINTK("skip_sequential_io: complete.");
+	return skip;
+}
+
 
 /*
  * Add/del pids whose IOs should be non-cacheable.

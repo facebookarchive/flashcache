@@ -173,6 +173,24 @@ struct flashcache_stats {
 	unsigned long clean_set_ios;
 };
 
+/* 
+ * Sequential block history structure - each one
+ * records a 'flow' of i/o.
+ */
+struct sequential_io {
+ 	sector_t 		most_recent_sector;
+	unsigned long		sequential_count;
+	/* We use LRU replacement when we need to record a new i/o 'flow' */
+	struct sequential_io 	*prev, *next;
+};
+#define SKIP_SEQUENTIAL_THRESHOLD 0			/* 0 = cache all, >0 = dont cache sequential i/o more than this (kb) */
+#define SEQUENTIAL_TRACKER_QUEUE_DEPTH	32		/* How many io 'flows' to track (random i/o will hog many).
+							 * This should be large enough so that we don't quickly 
+							 * evict sequential i/o when we see some random,
+							 * but small enough that searching through it isn't slow
+							 * (currently we do linear search, we could consider hashed */
+								
+	
 /*
  * Cache context
  */
@@ -275,6 +293,12 @@ struct cache_c {
 	int sysctl_cache_all;
 	int sysctl_fallow_clean_speed;
 	int sysctl_fallow_delay;
+	int sysctl_skip_seq_thresh;
+
+	/* Sequential I/O spotter */
+	struct sequential_io	seq_recent_ios[SEQUENTIAL_TRACKER_QUEUE_DEPTH];
+	struct sequential_io	*seq_io_head;
+	struct sequential_io 	*seq_io_tail;
 };
 
 /* kcached/pending job states */
@@ -333,7 +357,7 @@ enum {
 #define DIRTY			0x0040	/* Dirty, needs writeback to disk */
 /*
  * Old and Dirty blocks are cleaned with a Clock like algorithm. The leading hand
- * marks DIRTY_FALLOW_1. 60 seconds (default) later, the trailing hand comes along and
+ * marks DIRTY_FALLOW_1. 900 seconds (default) later, the trailing hand comes along and
  * marks DIRTY_FALLOW_2 if DIRTY_FALLOW_1 is already set. If the block was used in the 
  * interim, (DIRTY_FALLOW_1|DIRTY_FALLOW_2) is cleared. Any block that has both 
  * DIRTY_FALLOW_1 and DIRTY_FALLOW_2 marked is considered old and is eligible 

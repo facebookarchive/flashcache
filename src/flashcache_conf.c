@@ -1147,7 +1147,18 @@ init:
 	dmc->sysctl_cache_all = 1;
 	dmc->sysctl_fallow_clean_speed = FALLOW_CLEAN_SPEED;
 	dmc->sysctl_fallow_delay = FALLOW_DELAY;
-	
+	dmc->sysctl_skip_seq_thresh = SKIP_SEQUENTIAL_THRESHOLD;
+
+	/* Sequential i/o spotting */	
+	for (i = 0; i < SEQUENTIAL_TRACKER_QUEUE_DEPTH; i++) {
+		dmc->seq_recent_ios[i].most_recent_sector = 0;
+		dmc->seq_recent_ios[i].sequential_count = 0;
+		dmc->seq_recent_ios[i].prev = (struct sequential_io *)NULL;
+		dmc->seq_recent_ios[i].next = (struct sequential_io *)NULL;
+		seq_io_move_to_lruhead(dmc, &dmc->seq_recent_ios[i]);
+	}
+	dmc->seq_io_tail = &dmc->seq_recent_ios[0];
+
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, TASK_UNINTERRUPTIBLE);
 	dmc->next_cache = cache_list_head;
@@ -1295,6 +1306,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	DMINFO("conf:\n"						\
 	       "\tvirt dev (%s), ssd dev (%s), disk dev (%s) cache mode(%s)\n"		\
 	       "\tcapacity(%luM), associativity(%u), data block size(%uK) metadata block size(%ub)\n" \
+	       "\tskip sequential thresh(%uK)\n" \
 	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n" \
 	       "\tdirty blocks(%d), dirty percent(%d)\n",
 	       dmc->dm_vdevname, dmc->cache_devname, dmc->disk_devname,
@@ -1302,6 +1314,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->md_block_size * 512, 
+	       dmc->sysctl_skip_seq_thresh,
 	       dmc->size, dmc->cached_blocks, 
 	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
 	DMINFO("\tnr_queued(%lu)\n", dmc->pending_jobs_count);
@@ -1503,6 +1516,8 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		       dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT));
 	}
+	DMEMIT("\tskip sequential thresh(%uK)\n",
+	       dmc->sysctl_skip_seq_thresh);
 	DMEMIT("\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
 	       dmc->size, dmc->cached_blocks,
 	       (int)cache_pct);
