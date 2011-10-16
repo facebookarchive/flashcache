@@ -482,15 +482,8 @@ skip_sequential_io (struct cache_c *dmc, struct bio *bio)
 		seqio->most_recent_sector = bio->bi_sector;
 		seqio->sequential_count	  = 1;
 	}
-out:
-	DPRINTK("skip_sequential_io: dump of queue forwards");
-	for (seqio = dmc->seq_io_head; seqio != NULL; seqio = seqio->next) 
-		DPRINTK("sector %ld occurrences %ld", seqio->most_recent_sector, seqio->sequential_count);
-	DPRINTK("skip_sequential_io: dump of queue backwards");
-	for (seqio = dmc->seq_io_tail; seqio != NULL; seqio = seqio->prev) 
-		DPRINTK("sector %ld occurrences %ld", seqio->most_recent_sector, seqio->sequential_count);
-
 	DPRINTK("skip_sequential_io: complete.");
+out:
 	return skip;
 }
 
