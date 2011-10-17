@@ -166,7 +166,7 @@ issued by a pid will be valuable to prevent backups from wiping out
 the cache.
 
 Alternatively, rather than specifically marking pids as non-cacheable,
-users may wish to experiment with the sysctl 'skip_seq_thresh' which
+users may wish to experiment with the sysctl 'skip_seq_thresh_kb' which
 disables caching of IO determined to be sequential, above a configurable
 threshold of consecutive reads or writes.  The algorithm to spot 
 sequential IO has some ability to handle multiple 'flows' of IO, so

@@ -165,6 +165,7 @@ struct flashcache_stats {
 	unsigned long expiry;
 	unsigned long front_merge, back_merge;	/* Write Merging */
 	unsigned long uncached_reads, uncached_writes;
+	unsigned long uncached_sequential_reads, uncached_sequential_writes;
 	unsigned long disk_reads, disk_writes;
 	unsigned long ssd_reads, ssd_writes;
 	unsigned long uncached_io_requeue;
@@ -293,7 +294,7 @@ struct cache_c {
 	int sysctl_cache_all;
 	int sysctl_fallow_clean_speed;
 	int sysctl_fallow_delay;
-	int sysctl_skip_seq_thresh;
+	int sysctl_skip_seq_thresh_kb;
 
 	/* Sequential I/O spotter */
 	struct sequential_io	seq_recent_ios[SEQUENTIAL_TRACKER_QUEUE_DEPTH];

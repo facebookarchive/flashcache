@@ -1147,7 +1147,7 @@ init:
 	dmc->sysctl_cache_all = 1;
 	dmc->sysctl_fallow_clean_speed = FALLOW_CLEAN_SPEED;
 	dmc->sysctl_fallow_delay = FALLOW_DELAY;
-	dmc->sysctl_skip_seq_thresh = SKIP_SEQUENTIAL_THRESHOLD;
+	dmc->sysctl_skip_seq_thresh_kb = SKIP_SEQUENTIAL_THRESHOLD;
 
 	/* Sequential i/o spotting */	
 	for (i = 0; i < SEQUENTIAL_TRACKER_QUEUE_DEPTH; i++) {
@@ -1286,9 +1286,11 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	/* All modes */
         DMINFO("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
                "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
+	       "\tuncached sequential reads (%lu), uncached sequential writes (%lu)\n" \
                "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
                stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
                stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+	       stats->uncached_sequential_reads, stats->uncached_sequential_writes,
                stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->size > 0) {
 		dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
@@ -1314,7 +1316,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->md_block_size * 512, 
-	       dmc->sysctl_skip_seq_thresh,
+	       dmc->sysctl_skip_seq_thresh_kb,
 	       dmc->size, dmc->cached_blocks, 
 	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
 	DMINFO("\tnr_queued(%lu)\n", dmc->pending_jobs_count);
@@ -1464,9 +1466,11 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	/* All modes */
 	DMEMIT("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
+	       "\tuncached sequential reads (%lu), uncached sequential writes (%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
 	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
+	       stats->uncached_sequential_reads, stats->uncached_sequential_writes,
 	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->sysctl_io_latency_hist) {
 		int i;
@@ -1517,7 +1521,7 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		       dmc->block_size>>(10-SECTOR_SHIFT));
 	}
 	DMEMIT("\tskip sequential thresh(%uK)\n",
-	       dmc->sysctl_skip_seq_thresh);
+	       dmc->sysctl_skip_seq_thresh_kb);
 	DMEMIT("\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
 	       dmc->size, dmc->cached_blocks,
 	       (int)cache_pct);

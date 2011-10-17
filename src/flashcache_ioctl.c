@@ -414,11 +414,11 @@ seq_io_move_to_lruhead(struct cache_c *dmc, struct sequential_io *seqio)
  * continuations of a recent 'flow' of i/o.  After several contiguous blocks we consider
  * it sequential.
  *
- * You can tune the threshold with the sysctl sequential_threshold (e.g. 64 = 64kb),
- * or cache all i/o (without checking whether random or sequential) with sequential_threshold = 0.
+ * You can tune the threshold with the sysctl skip_seq_thresh_kb (e.g. 64 = 64kb),
+ * or cache all i/o (without checking whether random or sequential) with skip_seq_thresh_kb = 0.
  */
 int 
-skip_sequential_io (struct cache_c *dmc, struct bio *bio)
+skip_sequential_io(struct cache_c *dmc, struct bio *bio)
 {
 	struct sequential_io *seqio;
 	int sequential = 0;	/* Saw > 1 in a row? */
@@ -426,7 +426,7 @@ skip_sequential_io (struct cache_c *dmc, struct bio *bio)
 
 	/* sysctl skip sequential threshold = 0 : disable, cache all sequential and random i/o.
 	 * This is the default. */	 
-	if (dmc->sysctl_skip_seq_thresh == 0)  {
+	if (dmc->sysctl_skip_seq_thresh_kb == 0)  {
 		skip = 0;	/* Redundant, for emphasis */
 		goto out;
 	}
@@ -460,7 +460,7 @@ skip_sequential_io (struct cache_c *dmc, struct bio *bio)
 				seq_io_move_to_lruhead(dmc, seqio);
 
 			/* Is it now sequential enough to be sure? (threshold expressed in kb) */
-			if (to_bytes(seqio->sequential_count * dmc->block_size) > dmc->sysctl_skip_seq_thresh * 1024) {
+			if (to_bytes(seqio->sequential_count * dmc->block_size) > dmc->sysctl_skip_seq_thresh_kb * 1024) {
 				DPRINTK("skip_sequential_io: Sequential i/o detected, seq count now %lu", 
 					seqio->sequential_count);
 				/* Sufficiently sequential */
@@ -484,6 +484,13 @@ skip_sequential_io (struct cache_c *dmc, struct bio *bio)
 	}
 	DPRINTK("skip_sequential_io: complete.");
 out:
+	if (skip) {
+		if (bio_data_dir(bio) == READ)
+	        	dmc->flashcache_stats.uncached_sequential_reads++;
+		else 
+	        	dmc->flashcache_stats.uncached_sequential_writes++;
+	}
+
 	return skip;
 }
 
