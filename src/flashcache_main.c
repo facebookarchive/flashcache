@@ -127,11 +127,11 @@ int dm_io_async_bvec(unsigned int num_regions,
  * that lie fallow in the cache and thus are candidates for cleaning. 
  * Note that we could have such fallow blocks in sets where the dirty blocks 
  * is under the configured threshold.
- * The hands are spaced 60 seconds apart (one sweep runs every 60 seconds).
- * The interval is configurable via a sysctl. 
+ * The hands are spaced fallow_delay seconds apart (one sweep runs every 
+ * fallow_delay seconds).  The interval is configurable via a sysctl. 
  * Blocks are moved to DIRTY_FALLOW_1, if they are found to be in DIRTY_FALLOW_1
- * for 60 seconds or more, they are moved to DIRTY_FALLOW_1 | DIRTY_FALLOW_2, at
- * which point they are eligible for cleaning. Of course any intervening use
+ * for fallow_delay seconds or more, they are moved to DIRTY_FALLOW_1 | DIRTY_FALLOW_2, 
+ * at which point they are eligible for cleaning. Of course any intervening use
  * of the block within the interval turns off these 2 bits.
  * 
  * Cleaning of these blocks happens from the flashcache_clean_set() function.
@@ -402,7 +402,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 			cacheblk->nr_queued--;
 			if (pending_job->action == INVALIDATE) {
 				DPRINTK("flashcache_do_pending: INVALIDATE  %llu",
-					next_job->bio->bi_sector);
+					pending_job->bio->bi_sector);
 				VERIFY(pending_job->bio != NULL);
 				queued = flashcache_inval_blocks(dmc, pending_job->bio);
 				if (queued) {
@@ -1309,8 +1309,8 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	int res;
 	struct cacheblock *cacheblk;
 	int queued;
-
-	DPRINTK("Got a %s for %llu  %u bytes)",
+	
+	DPRINTK("Got a %s for %llu (%u bytes)",
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
 		bio->bi_sector, bio->bi_size);
 
@@ -1336,8 +1336,9 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		return;
 	}
-	if (res == -1 || flashcache_uncacheable(dmc)) {
-		/* No room or non-cacheable */
+
+	if (res == -1 || flashcache_uncacheable(dmc, bio)) {
+		/* No room , non-cacheable or sequential i/o means not wanted in cache */
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		DPRINTK("Cache read: Block %llu(%lu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
@@ -1719,7 +1720,7 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 		flashcache_pid_expiry_all_locked(dmc);
 	if ((to_sector(bio->bi_size) != dmc->block_size) ||
 	    (bio_data_dir(bio) == WRITE && 
-	     (dmc->cache_mode == FLASHCACHE_WRITE_AROUND || flashcache_uncacheable(dmc)))) {
+	     (dmc->cache_mode == FLASHCACHE_WRITE_AROUND || flashcache_uncacheable(dmc, bio)))) {
 		queued = flashcache_inval_blocks(dmc, bio);
 		spin_unlock_irq(&dmc->cache_spin_lock);
 		if (queued) {

@@ -40,8 +40,9 @@ block. Note that a sequential range of disk blocks will all map onto a
 given set.
 
 The DM layer breaks up all IOs into blocksize chunks before passing
-the IOs down to the cache layer. Flashcache caches all full blocksize
-IOs.
+the IOs down to the cache layer. By default, flashcache caches all 
+full blocksize IOs, but can be configured to only cache random IO
+whilst ignoring sequential IO.
 
 Replacement policy is either FIFO or LRU within a cache set. The
 default is FIFO but policy can be switched at any point at run time
@@ -163,6 +164,19 @@ process exit cleans things up (see Futures for more details).
 In spite of the limitations, we think the ability to mark Direct IOs
 issued by a pid will be valuable to prevent backups from wiping out
 the cache.
+
+Alternatively, rather than specifically marking pids as non-cacheable,
+users may wish to experiment with the sysctl 'skip_seq_thresh_kb' which
+disables caching of IO determined to be sequential, above a configurable
+threshold of consecutive reads or writes.  The algorithm to spot 
+sequential IO has some ability to handle multiple 'flows' of IO, so
+it should, for example, be able to skip caching of IOs of two
+flows of sequential reads or writes, but only cache IOs from a third
+random IO flow.  Note that multiple small files may be written to 
+consecutive blocks.  If these are written out in a batch (e.g. by
+an untar), this may appear as single sequential write, hence these 
+multiple small files will not be cached.  The categorization of IO as 
+sequential or random occurs purely at the block level, not the file level.
 
 (For a more detailed discussion about caching controls, see the SA Guide).
 
@@ -298,3 +312,5 @@ Acknowledgements :
 I would like to thank Bob English for doing a critical review of the
 design and the code of flashcache, for discussing this in detail with
 me and providing valuable suggestions.
+
+The option to detect and skip sequential IO was added by Will Smith.

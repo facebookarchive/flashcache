@@ -199,6 +199,7 @@ dev.flashcache.ram3+ram4.pid_expiry_secs = 60
 dev.flashcache.ram3+ram4.max_pids = 100
 dev.flashcache.ram3+ram4.do_pid_expiry = 0
 dev.flashcache.ram3+ram4.io_latency_hist = 0
+dev.flashcache.ram3+ram4.skip_seq_thresh_kb = 0
 
 Sysctls for a writeback mode cache :
 cache device /dev/sdb, disk device /dev/cciss/c0d2
@@ -218,6 +219,7 @@ dev.flashcache.sdb+c0d2.dirty_thresh_pct = 20
 dev.flashcache.sdb+c0d2.stop_sync = 0
 dev.flashcache.sdb+c0d2.do_sync = 0
 dev.flashcache.sdb+c0d2.io_latency_hist = 0
+dev.flashcache.sdb+c0d2.skip_seq_thresh_kb = 0
 
 Sysctls common to all cache modes :
 
@@ -243,13 +245,19 @@ dev.flashcache.<cachedev>.do_pid_expiry:
 	Enable expiry on the list of pids in the white/black lists.
 dev.flashcache.<cachedev>.pid_expiry_secs:
 	Set the expiry on the pid white/black lists.
+dev.flashcache.<cachedev>.skip_seq_thresh_kb:
+	Skip (don't cache) sequential IO larger than this number (in kb).
+	0 (default) means cache all IO, both sequential and random.
+	Sequential IO can only be determined 'after the fact', so
+	this much of each sequential I/O will be cached before we skip 
+	the rest.  Does not affect searching for IO in an existing cache.
 
 Sysctls for writeback mode only :
 
 dev.flashcache.<cachedev>.fallow_delay = 900
 	In seconds. Clean dirty blocks that have been "idle" (not 
-	read or written) for fallow_delay seconds. Default is 60 
-	seconds. 
+	read or written) for fallow_delay seconds. Default is 15
+	minutes. 
 	Setting this to 0 disables idle cleaning completely.
 dev.flashcache.<cachedev>.fallow_clean_speed = 2
 	The maximum number of "fallow clean" disk writes per set 
@@ -350,6 +358,8 @@ not cache the IO. ELSE,
 2) If the tgid is in the blacklist, don't cache this IO. UNLESS
 3) The particular pid is marked as an exception (and entered in the
 whitelist, which makes the IO cacheable).
+4) Finally, even if IO is cacheable up to this point, skip sequential IO 
+if configured by the sysctl.
 
 Conversely, in "cache nothing" mode,
 1) If the pid of the process issuing the IO is in the whitelist,
@@ -357,6 +367,8 @@ cache the IO. ELSE,
 2) If the tgid is in the whitelist, cache this IO. UNLESS
 3) The particular pid is marked as an exception (and entered in the
 blacklist, which makes the IO non-cacheable).
+4) Anything whitelisted is cached, regardless of sequential or random
+IO.
 
 Examples :
 --------
@@ -479,6 +491,34 @@ agsize % C = (1 - (1/agcount))*C
 agsize * agcount ~= V
 
 Works just as well as the formula above.
+
+Tuning Sequential IO Skipping for better flashcache performance
+===============================================================
+Skipping sequential IO makes sense in two cases:
+1) your sequential write speed of your SSD is slower than
+   the sequential write speed or read speed of your disk.  In 
+   particular, for implementations with RAID disks (especially 
+   modes 0, 10 or 5) sequential reads may be very fast.  If 
+   'cache_all' mode is used, every disk read miss must also be 
+   written to SSD.  If you notice slower sequential reads and writes 
+   after enabling flashcache, this is likely your problem.
+2) Your 'resident set' of disk blocks that you want cached, i.e.
+   those that you would hope to keep in cache, is smaller
+   than the size of your SSD.  You can check this by monitoring
+   how quick your cache fills up ('dmsetup table').  If this
+   is the case, it makes sense to prioritize caching of random IO,
+   since SSD performance vastly exceeds disk performance for 
+   random IO, but is typically not much better for sequential IO.
+
+In the above cases, start with a high value (say 1024k) for
+sysctl dev.flashcache.<device>.skip_seq_thresh_kb, so only the
+largest sequential IOs are skipped, and gradually reduce
+if benchmarks show it's helping.  Don't leave it set to a very
+high value, return it to 0 (the default), since there is some
+overhead in categorizing IO as random or sequential.
+
+If neither of the above hold, continue to cache all IO, 
+(the default) you will likely benefit from it. 
 
 
 Further Information
