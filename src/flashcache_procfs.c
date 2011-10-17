@@ -212,7 +212,7 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	16
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	17
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -384,6 +384,15 @@ static struct flashcache_writeback_sysctl_table {
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
 			.procname	= "fallow_delay",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "skip_seq_thresh_kb",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
@@ -595,6 +604,8 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_fallow_clean_speed;
 	else if (strcmp(vars->procname, "fallow_delay") == 0) 
 		return &dmc->sysctl_fallow_delay;
+	else if (strcmp(vars->procname, "skip_seq_thresh_kb") == 0) 
+		return &dmc->sysctl_skip_seq_thresh_kb;
 	VERIFY(0);
 	return NULL;
 }
@@ -790,6 +801,8 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 		   stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes);
 	seq_printf(seq,  "uncached_reads=%lu uncached_writes=%lu uncached_IO_requeue=%lu ",
 		   stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue);
+	seq_printf(seq,  "uncached_sequential_reads=%lu uncached_sequential_writes=%lu ",
+		   stats->uncached_sequential_reads, stats->uncached_sequential_writes);
 	seq_printf(seq, "pid_adds=%lu pid_dels=%lu pid_drops=%lu pid_expiry=%lu\n",
 		   stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	return 0;

@@ -60,7 +60,10 @@ int flashcache_ioctl(struct dm_target *ti, unsigned int cmd,
  		     unsigned long arg);
 #endif
 void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
-int flashcache_uncacheable(struct cache_c *dmc);
+int flashcache_uncacheable(struct cache_c *dmc, struct bio *bio);
+void seq_io_remove_from_lru(struct cache_c *dmc, struct sequential_io *seqio);
+void seq_io_move_to_lruhead(struct cache_c *dmc, struct sequential_io *seqio);
+int skip_sequential_io(struct cache_c *dmc, struct bio *bio);
 void flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force);
 #endif /* __KERNEL__ */
 
