@@ -1286,7 +1286,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	/* All modes */
         DMINFO("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
                "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-	       "\tuncached sequential reads (%lu), uncached sequential writes (%lu)\n" \
+	       "\tuncached sequential reads(%lu), uncached sequential writes(%lu)\n" \
                "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
                stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
                stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
@@ -1466,7 +1466,7 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	/* All modes */
 	DMEMIT("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
-	       "\tuncached sequential reads (%lu), uncached sequential writes (%lu)\n" \
+	       "\tuncached sequential reads(%lu), uncached sequential writes(%lu)\n" \
 	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
 	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
