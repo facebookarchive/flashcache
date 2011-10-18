@@ -28,10 +28,12 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>
+#include <linux/kernel.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/sysinfo.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,6 +173,20 @@ load_module(void)
 	fclose(fp);
 }
 
+static void 
+check_sure(void)
+{
+	char input;
+
+	fprintf(stderr, "Are you sure you want to proceed ? (y/n): ");
+	scanf("%c", &input);
+	printf("\n");
+	if (input != 'y') {
+		fprintf(stderr, "Exiting FlashCache creation\n");
+		exit(1);
+	}
+}
+
 main(int argc, char **argv)
 {
 	int cache_fd, disk_fd, c;
@@ -178,6 +194,8 @@ main(int argc, char **argv)
 	struct flash_superblock *sb = (struct flash_superblock *)buf;
 	sector_t cache_devsize, disk_devsize;
 	sector_t block_size = 0, md_block_size = 0, cache_size = 0;
+	sector_t ram_needed;
+	struct sysinfo i;
 	int cache_sectorsize;
 	int associativity = 512;
 	int ret;
@@ -301,18 +319,28 @@ main(int argc, char **argv)
 			pname, cache_size, cache_devsize);
 		exit(1);		
 	}
+
+	/* Remind users how much core memory it will take - not always insignificant.
+ 	 * If it's > 25% of RAM, warn.
+         */
+	if (cache_size == 0)
+		ram_needed = (cache_devsize / block_size) * sizeof(struct cacheblock);	/* Whole device */
+	else 
+		ram_needed = (cache_size    / block_size) * sizeof(struct cacheblock);
+
+	sysinfo(&i);
+	printf("Flashcache metadata will use %luMB of your %luMB main memory\n",
+		ram_needed >> 20, i.totalram >> 20);
+	if (!force && ram_needed > (i.totalram * 25 / 100)) {
+		fprintf(stderr, "Proportion of main memory needed for flashcache metadata is high.\n");
+		fprintf(stderr, "You can reduce this with a smaller cache or a larger blocksize.\n");
+		check_sure();
+	}
+
 	if (!force && cache_size > disk_devsize) {
-		char input;
-			
 		fprintf(stderr, "Size of cache volume (%s) is larger than disk volume (%s)\n",
 			ssd_devname, disk_devname);
-		fprintf(stderr, "Are you sure you want to proceed ? (y/n): ");
-		scanf("%c", &input);
-		printf("\n");
-		if (input != 'y') {
-			fprintf(stderr, "Exiting FlashCache creation\n");			
-			exit(1);
-		}
+		check_sure();
 	}
 	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %lu %lu"
 		" | dmsetup create %s",

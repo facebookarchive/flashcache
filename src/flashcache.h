@@ -105,16 +105,7 @@
 #define FLASHCACHE_MAX_ASSOC	8192
 #define FLASHCACHE_LRU_NULL	0xFFFF
 
-/* Cache block metadata structure */
-struct cacheblock {
-	u_int16_t	cache_state;
-	int16_t 	nr_queued;	/* jobs in pending queue */
-	u_int16_t	lru_prev, lru_next;
-	sector_t 	dbn;	/* Sector number of the cached block */
-#ifdef FLASHCACHE_DO_CHECKSUMS
-	u_int64_t 	checksum;
-#endif
-};
+struct cacheblock;
 
 struct cache_set {
 	u_int32_t		set_fifo_next;
@@ -380,6 +371,17 @@ typedef u_int64_t sector_t;
 #define CACHE_MD_STATE_CLEAN		0xfacecafe
 #define CACHE_MD_STATE_FASTCLEAN	0xcafefeed
 #define CACHE_MD_STATE_UNSTABLE		0xc8249756
+
+/* Cache block metadata structure */
+struct cacheblock {
+	u_int16_t	cache_state;
+	int16_t 	nr_queued;	/* jobs in pending queue */
+	u_int16_t	lru_prev, lru_next;
+	sector_t 	dbn;	/* Sector number of the cached block */
+#ifdef FLASHCACHE_DO_CHECKSUMS
+	u_int64_t 	checksum;
+#endif
+};
 
 struct flash_superblock {
 	sector_t size;		/* Cache size */
