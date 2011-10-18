@@ -174,7 +174,7 @@ it should, for example, be able to skip caching of IOs of two
 flows of sequential reads or writes, but only cache IOs from a third
 random IO flow.  Note that multiple small files may be written to 
 consecutive blocks.  If these are written out in a batch (e.g. by
-an untar), this may appear as single sequential write, hence these 
+an untar), this may appear as a single sequential write, hence these 
 multiple small files will not be cached.  The categorization of IO as 
 sequential or random occurs purely at the block level, not the file level.
 
@@ -186,8 +186,8 @@ Cache Mirroring :
 ---------------
 Mirroring the cache across 2 physical flash devices should work
 without any code changes. Since the cache device is a block device, we
-can build a RAID-0 block device out of the 2 physical flash devices
-and use that as our cache device. (I have not yet tested this yet).
+can build a RAID-1 block device out of the 2 physical flash devices
+and use that as our cache device. (I have not yet tested this).
 
 Cache Resizing :
 --------------
