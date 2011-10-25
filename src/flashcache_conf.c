@@ -910,14 +910,20 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 	dmc->tgt = ti;
-	if (flashcache_get_dev(ti, argv[0], &dmc->disk_dev, 
-			       dmc->disk_devname, ti->len)) {
-		ti->error = "flashcache: Disk device lookup failed";
+	if ((r = flashcache_get_dev(ti, argv[0], &dmc->disk_dev, 
+				    dmc->disk_devname, ti->len))) {
+		if (r == -EBUSY)
+			ti->error = "flashcache: Disk device is busy, cannot create cache";
+		else
+			ti->error = "flashcache: Disk device lookup failed";
 		goto bad1;
 	}
-	if (flashcache_get_dev(ti, argv[1], &dmc->cache_dev,
-			       dmc->cache_devname, 0)) {
-		ti->error = "flashcache: Cache device lookup failed";
+	if ((r = flashcache_get_dev(ti, argv[1], &dmc->cache_dev,
+				    dmc->cache_devname, 0))) {
+		if (r == -EBUSY)
+			ti->error = "flashcache: Cache device is busy, cannot create cache";
+		else
+			ti->error = "flashcache: Cache device lookup failed";
 		goto bad2;
 	}
 
