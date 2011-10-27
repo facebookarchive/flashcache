@@ -828,23 +828,18 @@ flashcache_md_write_done(struct kcached_job *job)
 				}
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_do_pending(job);
-				/* Kick off more cleanings */
-				if (action == WRITEDISK)
-					flashcache_clean_set(dmc, index / dmc->assoc);
-				else
-					flashcache_sync_blocks(dmc);
 			} else {
 				cacheblk->cache_state &= ~BLOCK_IO_INPROG;
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_free_cache_job(job);
 				if (atomic_dec_and_test(&dmc->nr_jobs))
 					wake_up(&dmc->destroyq);
-				/* Kick off more cleanings */
-				if (action == WRITEDISK)
-					flashcache_clean_set(dmc, index / dmc->assoc);
-				else
-					flashcache_sync_blocks(dmc);
 			}
+			/* Kick off more cleanings */
+			if (action == WRITEDISK)
+				flashcache_clean_set(dmc, index / dmc->assoc);
+			else
+				flashcache_sync_blocks(dmc);
 			dmc->flashcache_stats.cleanings++;
 			if (action == WRITEDISK_SYNC)
 				flashcache_update_sync_progress(dmc);

@@ -236,11 +236,7 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 					MD_SECTORS_PER_BLOCK(dmc);
 				slots_written = 0;
 				sectors_written += where.count;	/* debug */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#else
-				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#endif
 				if (error) {
 					write_errors++;
 					DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %lu error %d !",
@@ -261,11 +257,7 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 		if (slots_written % MD_SLOTS_PER_BLOCK(dmc))
 			where.count += MD_SECTORS_PER_BLOCK(dmc);
 		sectors_written += where.count;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#else
-		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#endif
 		if (error) {
 			write_errors++;
 				DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %lu error %d !",
@@ -317,11 +309,7 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 
 	where.sector = 0;
 	where.count = dmc->md_block_size;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#endif
 	if (error) {
 		write_errors++;
 		DMERR("flashcache_writeback_md_store: Could not write out cache metadata superblock %lu error %d !",
@@ -417,11 +405,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = 0;
 	where.count = dmc->md_block_size;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
-#endif
 	if (error) {
 		vfree((void *)header);
 		DMERR("flashcache_writeback_create: Could not read cache superblock %lu error %d !",
@@ -508,13 +492,8 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 				where.count = (slots_written / MD_SLOTS_PER_BLOCK(dmc)) * MD_SECTORS_PER_BLOCK(dmc);
 				slots_written = 0;
 				sectors_written += where.count;	/* debug */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, 
 								 meta_data_cacheblock);
-#else
-				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, 
-								 meta_data_cacheblock);
-#endif
 				if (error) {
 					vfree((void *)header);
 					vfree((void *)meta_data_cacheblock);
@@ -538,11 +517,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 		if (slots_written % MD_SLOTS_PER_BLOCK(dmc))
 			where.count += MD_SECTORS_PER_BLOCK(dmc);
 		sectors_written += where.count;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#else
-		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
-#endif
 		if (error) {
 			vfree((void *)header);
 			vfree((void *)meta_data_cacheblock);
@@ -579,11 +554,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	printk("flashcache-dbg: cachedev check - %s %s", header->cache_devname,
 				dmc->dm_vdevname);
 	
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#endif
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
@@ -626,11 +597,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = 0;
 	where.count = DEFAULT_MD_BLOCK_SIZE;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
-#endif
 	if (error) {
 		vfree((void *)header);
 		DMERR("flashcache_writeback_load: Could not read cache superblock %lu error %d!",
@@ -715,11 +682,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 		else
 			where.count = (slots_read / MD_SLOTS_PER_BLOCK(dmc)) * MD_SECTORS_PER_BLOCK(dmc);
 		sectors_read += where.count;	/* Debug */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 		error = flashcache_dm_io_sync_vm(dmc, &where, READ, meta_data_cacheblock);
-#else
-		error = flashcache_dm_io_sync_vm(dmc, &where, READ, meta_data_cacheblock);
-#endif
 		if (error) {
 			vfree((void *)header);
 			vfree(dmc->cache);
@@ -817,11 +780,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 	header->cache_version = dmc->on_ssd_version;
 	where.sector = 0;
 	where.count = dmc->md_block_size;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
-#endif
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
