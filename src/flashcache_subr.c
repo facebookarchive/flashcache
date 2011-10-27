@@ -220,11 +220,7 @@ flashcache_read_compute_checksum(struct cache_c *dmc, int index, void *block)
 	where.bdev = dmc->cache_dev->bdev;
 	where.sector = INDEX_TO_CACHE_ADDR(dmc, index);
 	where.count = dmc->block_size;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
-#else
-	error = flashcache_dm_io_sync_vm(dmc, &where, READ, block);
-#endif
 	if (error)
 		return error;
 	cnt = dmc->block_size * 512;

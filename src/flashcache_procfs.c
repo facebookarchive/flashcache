@@ -438,7 +438,7 @@ static struct flashcache_writeback_sysctl_table {
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	8
+#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	9
 
 static struct flashcache_writethrough_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -529,6 +529,15 @@ static struct flashcache_writethrough_sysctl_table {
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
 			.procname	= "cache_all",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "skip_seq_thresh_kb",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
