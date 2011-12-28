@@ -1646,7 +1646,7 @@ flashcache_init(void)
 		return r;
 	}
 #else /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22) */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0) || RHEL_RELEASE_CODE < 1538
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,0,0)
 	flashcache_io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
 #else
 	flashcache_io_client = dm_io_client_create();
