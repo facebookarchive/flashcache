@@ -40,8 +40,12 @@ modules_install: modules
 utils_install: utils
 	make -C utils install
 
+.PHONY: ocf_install
+ocf_install:
+	make -C ocf install
+
 .PHONY: install
-install: modules_install utils_install
+install: modules_install utils_install ocf_install
 
 .PHONY: clean
 clean:
