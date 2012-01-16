@@ -1077,6 +1077,10 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 */
 	if (atomic_read(&dmc->remove_in_prog))
 		return;
+
+	if (unlikely(!dmc->sysctl_background_sync_active))
+		return;
+
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (unlikely(dmc->sysctl_error_inject & WRITES_LIST_ALLOC_FAIL)) {
 		if (writes_list)
@@ -1297,6 +1301,52 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 	}
 }
 
+void 
+flashcache_direct_io_callback(unsigned long error, void *context)
+{
+	struct bio *bio = (struct bio *) context;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
+	bio_endio(bio, bio->bi_size, error);
+#else
+	bio_endio(bio, error);
+#endif
+}
+
+static void
+flashcache_read_direct(struct cache_c *dmc, struct bio* bio)
+{
+	struct dm_io_region disk;
+
+	disk.bdev = dmc->disk_dev->bdev;
+	disk.sector = bio->bi_sector;
+	disk.count = to_sector(bio->bi_size);
+
+	dmc->flashcache_stats.disk_reads++;
+	dm_io_async_bvec(1, &disk, READ,
+		bio->bi_io_vec + bio->bi_idx,
+		flashcache_direct_io_callback, bio);
+}
+
+static bool
+flashcache_use_cache(struct cache_c *dmc, struct bio *bio, int percent)
+{
+	unsigned long pos;
+	struct timeval tm;
+
+	if (dmc->sysctl_split_io_by_usec) {
+		do_gettimeofday(&tm);
+		pos = tm.tv_usec;
+	} else {
+		pos = bio->bi_sector;
+	}
+
+	if ((pos/dmc->sysctl_split_io_chunk_size) % 100 < percent) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
 static void
 flashcache_read(struct cache_c *dmc, struct bio *bio)
 {
@@ -1316,7 +1366,15 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		cacheblk = &dmc->cache[index];
 		if ((cacheblk->cache_state & VALID) && 
 		    (cacheblk->dbn == bio->bi_sector)) {
-			flashcache_read_hit(dmc, bio, index);
+			if (flashcache_use_cache (dmc, bio, dmc->sysctl_cache_read_freq) ||
+				(cacheblk->cache_state & DIRTY)) {
+				dmc->read_cache_counter++;
+				flashcache_read_hit(dmc, bio, index);
+			} else {
+				dmc->read_direct_counter++;
+				spin_unlock_irq(&dmc->cache_spin_lock);
+				flashcache_read_direct(dmc, bio);
+			}
 			return;
 		}
 	}
@@ -1557,7 +1615,7 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 }
 
 static void
-flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
+flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index, int force_write_through)
 {
 	struct cacheblock *cacheblk;
 	struct pending_job *pjob;
@@ -1595,14 +1653,14 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			atomic_inc(&dmc->nr_jobs);
 			dmc->flashcache_stats.ssd_writes++;
 			job->action = WRITECACHE;
-			if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+			if (dmc->cache_mode == FLASHCACHE_WRITE_BACK && !force_write_through) {
 				/* Write data to the cache */
 				dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
 						 bio->bi_io_vec + bio->bi_idx,
 						 flashcache_io_callback, job);
 				flashcache_clean_set(dmc, index / dmc->assoc);
 			} else {
-				VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH);
+				VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH || (dmc->cache_mode == FLASHCACHE_WRITE_BACK && force_write_through));
 				/* Write data to both disk and cache */
 				dmc->flashcache_stats.disk_writes++;
 				dm_io_async_bvec(2, 
@@ -1634,6 +1692,21 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 }
 
 static void
+flashcache_write_direct(struct cache_c *dmc, struct bio* bio)
+{
+	struct dm_io_region disk;
+
+	disk.bdev = dmc->disk_dev->bdev;
+	disk.sector = bio->bi_sector;
+	disk.count = to_sector(bio->bi_size);
+
+	dmc->flashcache_stats.disk_writes++;
+	dm_io_async_bvec(1, &disk, WRITE,
+		bio->bi_io_vec + bio->bi_idx,
+		flashcache_direct_io_callback, bio);
+}
+
+static void
 flashcache_write(struct cache_c *dmc, struct bio *bio)
 {
 	int index;
@@ -1644,15 +1717,34 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	spin_lock_irq(&dmc->cache_spin_lock);
 	res = flashcache_lookup(dmc, bio, &index);
 	if (res != -1) {
-		/* Cache Hit */
+
 		cacheblk = &dmc->cache[index];		
+		/* Cache Hit */
 		if ((cacheblk->cache_state & VALID) && 
 		    (cacheblk->dbn == bio->bi_sector)) {
 			/* Cache Hit */
-			flashcache_write_hit(dmc, bio, index);
+			if (cacheblk->cache_state & DIRTY) {
+				dmc->write_hit_dirty_to_cache++;
+				flashcache_write_hit(dmc, bio, index, 0);
+			} else {
+				if (flashcache_use_cache (dmc, bio, dmc->sysctl_cache_dirty_freq)) {
+					dmc->write_hit_clean_to_cache++;
+					flashcache_write_hit(dmc, bio, index, 0);
+				} else {
+					dmc->write_hit_clean_direct++;
+					flashcache_write_hit(dmc, bio, index, 1);
+				}
+			}
 		} else {
 			/* Cache Miss, found block to recycle */
-			flashcache_write_miss(dmc, bio, index);
+			if (flashcache_use_cache (dmc, bio, dmc->sysctl_cache_write_freq)) {
+				dmc->write_miss_to_cache++;
+				flashcache_write_miss(dmc, bio, index);
+			} else {
+				dmc->write_miss_direct++;
+				flashcache_write_direct(dmc, bio);
+				spin_unlock_irq(&dmc->cache_spin_lock);
+			}
 		}
 		return;
 	}

@@ -270,6 +270,14 @@ struct cache_c {
 	char cache_devname[DEV_PATHLEN];
 	char disk_devname[DEV_PATHLEN];
 
+	unsigned long read_cache_counter;
+	unsigned long read_direct_counter;
+	unsigned long write_hit_dirty_to_cache;
+	unsigned long write_hit_clean_to_cache;
+	unsigned long write_hit_clean_direct;
+	unsigned long write_miss_to_cache;
+	unsigned long write_miss_direct;
+
 	/* Per device sysctls */
 	int sysctl_io_latency_hist;
 	int sysctl_do_sync;
@@ -279,7 +287,13 @@ struct cache_c {
 	int sysctl_max_pids;
 	int sysctl_pid_expiry_secs;
 	int sysctl_reclaim_policy;
+	int sysctl_cache_read_freq;
+	int sysctl_cache_write_freq;
+	int sysctl_cache_dirty_freq;
+	int sysctl_split_io_chunk_size;
+	int sysctl_split_io_by_usec;
 	int sysctl_zerostats;
+	int sysctl_background_sync_active;
 	int sysctl_error_inject;
 	int sysctl_fast_remove;
 	int sysctl_cache_all;
