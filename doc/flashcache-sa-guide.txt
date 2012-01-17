@@ -302,6 +302,18 @@ dev.flashcache.<cachedev>.cache_dirty_freq = 100
 dev.flashcache.<cachedev>.background_sync_active = 1
 	This option allows to stop syncing of dirty blocks for a while.
 
+Distributing IO between cache and source device :
+===============================================
+
+In some cases one may need to distribute read/write operations between cache and source device. The percent of read/write operations which must be directed to the cache
+device can be set by tuning sysctls cache_read_freq, cache_write_freq and cache_dirty_freq.
+
+Two strategies available:
+ 1) split_io_by_usec = 1  : IO will be splitted by timer. For example, in case cache_read_freq=20% and split_io_chunk_size=1000, 20*1000=20000 usecs all read operations
+    will be directed to cache and other (100%-20%)*1000=80000 usecs to source device.
+ 2) split_io_by_usec = 0  : IO will be splitted by internal counter. In case cache_read_freq=1% and split_io_chunk_size=1000, 1*1000=1000 read operations will be
+    directed to cache and other (100%-1%)*1000=99000 to source device.
+
 Using dmsetup to create and load flashcache volumes :
 ===================================================
 Few users will need to use dmsetup natively to create and load 
