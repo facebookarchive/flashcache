@@ -289,6 +289,18 @@ dev.flashcache.<cachedev>.max_clean_ios_set = 2
 	blocks.
 dev.flashcache.<cachedev>.max_clean_ios_total = 4
 	Maximum writes that can be issued when syncing all blocks.
+dev.flashcache.<cachedev>.split_io_by_usec = 1
+	Distribute IO between cache and source device by usecs (1) or by internal counter (0)
+dev.flashcache.<cachedev>.split_io_chunk_size = 200
+	Chunk size (in blocks) for IO splitting.
+dev.flashcache.<cachedev>.cache_read_freq = 100
+	How often to read from cache device when block is available in cache, in percents.
+dev.flashcache.<cachedev>.cache_write_freq = 100
+	How often to write into cache device, in percents.
+dev.flashcache.<cachedev>.cache_dirty_freq = 100
+	How oten to write into cache device, when block is already cached, but clear. Such a write will make block dirty.
+dev.flashcache.<cachedev>.background_sync_active = 1
+	This option allows to stop syncing of dirty blocks for a while.
 
 Using dmsetup to create and load flashcache volumes :
 ===================================================

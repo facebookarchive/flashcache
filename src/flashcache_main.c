@@ -1312,6 +1312,9 @@ flashcache_direct_io_callback(unsigned long error, void *context)
 #endif
 }
 
+/*
+ * Read blocks from source device directly.
+ */
 static void
 flashcache_read_direct(struct cache_c *dmc, struct bio* bio)
 {
@@ -1332,6 +1335,9 @@ flashcache_use_cache(struct cache_c *dmc, struct bio *bio, int percent)
 {
 	unsigned long pos;
 	struct timeval tm;
+
+	if (percent == 100)
+		return 1;
 
 	if (dmc->sysctl_split_io_by_usec) {
 		do_gettimeofday(&tm);
@@ -1691,6 +1697,9 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index, int force_
 	}
 }
 
+/*
+ * Write blocks to source device directly, bypassing cache device.
+ */
 static void
 flashcache_write_direct(struct cache_c *dmc, struct bio* bio)
 {
