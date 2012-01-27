@@ -1098,14 +1098,6 @@ init:
 	dmc->max_clean_ios_total = MAX_CLEAN_IOS_TOTAL;
 	dmc->max_clean_ios_set = MAX_CLEAN_IOS_SET;
 
-	dmc->read_cache_counter = 0;
-	dmc->read_direct_counter = 0;
-	dmc->write_hit_dirty_to_cache = 0;
-	dmc->write_hit_clean_to_cache = 0;
-	dmc->write_hit_clean_direct = 0;
-	dmc->write_miss_to_cache = 0;
-	dmc->write_miss_direct = 0;
-
 	/* Other sysctl defaults */
 	dmc->sysctl_io_latency_hist = 0;
 	dmc->sysctl_do_sync = 0;
@@ -1116,7 +1108,6 @@ init:
 	dmc->sysctl_reclaim_policy = FLASHCACHE_FIFO;
 	dmc->sysctl_cache_read_freq = 100;
 	dmc->sysctl_cache_write_freq = 100;
-	dmc->sysctl_cache_dirty_freq = 100;
 	dmc->sysctl_split_io_chunk_size = 200;
 	dmc->sysctl_split_io_by_usec = 1;
 	dmc->sysctl_zerostats = 0;
@@ -1262,24 +1253,15 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 		       stats->enqueues, stats->pending_inval,
 		       stats->noroom);
 	}
-
 	/* All modes */
         DMINFO("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
                "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tuncached sequential reads(%lu), uncached sequential writes(%lu)\n" \
-               "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)\n" \
-	       "\tcache_reads=%lu direct_reads=%lu\n" \
-	       "\twrite_hit_dirty_to_cache=%lu write_hit_clean_to_cache=%lu\n" \
-	       "\twrite_hit_clean_direct=%lu write_miss_to_cache=%lu\n" \
-	       "\twrite_miss_direct=%lu\n",
+               "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
                stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
                stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
 	       stats->uncached_sequential_reads, stats->uncached_sequential_writes,
-               stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry,
-	       dmc->read_cache_counter, dmc->read_direct_counter,
-	       dmc->write_hit_dirty_to_cache, dmc->write_hit_clean_to_cache,
-	       dmc->write_hit_clean_direct, dmc->write_miss_to_cache,
-	       dmc->write_miss_direct);
+               stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->size > 0) {
 		dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
 		cache_pct = ((u_int64_t)dmc->cached_blocks * 100) / dmc->size;
@@ -1455,19 +1437,11 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	DMEMIT("\tdisk reads(%lu), disk writes(%lu) ssd reads(%lu) ssd writes(%lu)\n" \
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tuncached sequential reads(%lu), uncached sequential writes(%lu)\n" \
-	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)\n" \
-	       "\tcache_reads=%lu direct_reads=%lu\n" \
-	       "\twrite_hit_dirty_to_cache=%lu write_hit_clean_to_cache=%lu\n" \
-	       "\twrite_hit_clean_direct=%lu write_miss_to_cache=%lu\n" \
-	       "\twrite_miss_direct=%lu\n",
+	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
 	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
 	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
 	       stats->uncached_sequential_reads, stats->uncached_sequential_writes,
-	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry,
-	       dmc->read_cache_counter, dmc->read_direct_counter,
-	       dmc->write_hit_dirty_to_cache, dmc->write_hit_clean_to_cache,
-	       dmc->write_hit_clean_direct, dmc->write_miss_to_cache,
-	       dmc->write_miss_direct);
+	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
 	if (dmc->sysctl_io_latency_hist) {
 		int i;
 		

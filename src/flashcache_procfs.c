@@ -212,7 +212,7 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	23
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	22
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -335,15 +335,6 @@ static struct flashcache_writeback_sysctl_table {
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
 			.procname	= "cache_write_freq",
-			.maxlen		= sizeof(int),
-			.mode		= 0644,
-			.proc_handler	= &proc_dointvec,
-		},
-		{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-			.ctl_name	= CTL_UNNUMBERED,
-#endif
-			.procname	= "cache_dirty_freq",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
@@ -492,7 +483,7 @@ static struct flashcache_writeback_sysctl_table {
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	15
+#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	14
 
 static struct flashcache_writethrough_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -564,15 +555,6 @@ static struct flashcache_writethrough_sysctl_table {
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
 			.procname	= "cache_write_freq",
-			.maxlen		= sizeof(int),
-			.mode		= 0644,
-			.proc_handler	= &proc_dointvec,
-		},
-		{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
-			.ctl_name	= CTL_UNNUMBERED,
-#endif
-			.procname	= "cache_dirty_freq",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
@@ -713,8 +695,6 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_cache_read_freq;
 	else if (strcmp(vars->procname, "cache_write_freq") == 0) 
 		return &dmc->sysctl_cache_write_freq;
-	else if (strcmp(vars->procname, "cache_dirty_freq") == 0) 
-		return &dmc->sysctl_cache_dirty_freq;
 	else if (strcmp(vars->procname, "split_io_by_usec") == 0) 
 		return &dmc->sysctl_split_io_by_usec;
 	else if (strcmp(vars->procname, "split_io_chunk_size") == 0) 

@@ -296,6 +296,36 @@ flashcache_pid_expiry_all_locked(struct cache_c *dmc)
 	dmc->pid_expire_check = jiffies + (dmc->sysctl_pid_expiry_secs + 1) * HZ;
 }
 
+int
+skip_split_io(struct cache_c *dmc, struct bio *bio)
+{
+	unsigned long pos;
+	struct timeval tm;
+	int percent;
+
+	if (bio_data_dir(bio) == WRITE) {
+		percent = dmc->sysctl_cache_write_freq;
+	} else {
+		percent = dmc->sysctl_cache_read_freq;
+	}
+
+	if (percent == 100)
+		return 0;
+
+	if (dmc->sysctl_split_io_by_usec) {
+		do_gettimeofday(&tm);
+		pos = tm.tv_usec;
+	} else {
+		pos = bio->bi_sector;
+	}
+
+	if ((pos/dmc->sysctl_split_io_chunk_size) % 100 < percent) {
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
 /*
  * Is the IO cacheable, depending on global cacheability and the white/black
  * lists ? This function is a bit confusing because we want to support inheritance
@@ -339,7 +369,7 @@ flashcache_uncacheable(struct cache_c *dmc, struct bio *bio)
 		 * the relevant sysctl is set, we will skip it.
 		 */
 		dontcache = skip_sequential_io(dmc, bio);
-			
+		
 	} else { /* cache nothing */
 		/* If the tid has been whitelisted, we cache 
 		   This overrides everything else */
@@ -364,6 +394,10 @@ flashcache_uncacheable(struct cache_c *dmc, struct bio *bio)
   		 */
 	}
 out:
+	/* Check IO splitting condition */
+	if (!dontcache)
+		dontcache = skip_split_io(dmc, bio);
+
 	return dontcache;
 }
 
