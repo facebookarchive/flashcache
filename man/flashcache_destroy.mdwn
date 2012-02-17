@@ -1,0 +1,43 @@
+% FLASHCACHE_DESTROY(8) flashcache_destroy
+%
+% September 2011
+
+# NAME
+
+flashcache_load - destroy an existing flashcache volume
+
+
+# DESCRIPTION
+
+The purpose of the **flashcache_load** command is to Clear all meta data from
+cache device. Beware, this will cause data loss on the affected devices. 
+
+
+# SYNOPSIS
+
+flashcache_destroy *cache_devname*
+
+
+# EXAMPLE
+
+flashcache_destroy */dev/sdc*
+:   Destroy the existing cache on /dev/sdc. All data is lost!
+
+
+# SEE ALSO
+
+`flashcache_create`(8), `flashcache_load`(8)
+
+*README* and other documents in **/usr/share/doc/flashcache-utils**
+
+The flashcache source code and all documentation may be downloaded from
+<https://github.com/facebook/flashcache/>.
+
+
+# AUTHORS
+
+Flashcache is developed by Mohan Srinivasan <mohan@fb.com>
+
+This man page was written by Dmitry Smirnov <onlyjob@member.fsf.org>
+for Debian GNU/Linux (but may be used by others).
+
