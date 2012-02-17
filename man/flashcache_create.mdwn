@@ -1,0 +1,110 @@
+% FLASHCACHE_CREATE(8) flashcache_create
+%
+% September 2011
+
+# NAME
+
+flashcache_create - create a new flashcache volume
+
+# DESCRIPTION
+
+**flashcache_create** initializes a new flashcache volume from unformated block
+devices. It creates flashcache meta data and provides new volumes though their
+volume mappings.
+
+# SYNOPSIS
+
+flashcache_create -p *back*|*around*|*thru* [-s *cache size*] [-b *block size*] [-v]
+*cachedevname*  *cache_devname*  *disk_devname*
+
+
+# OPTIONS
+
+-v
+:    verbose
+
+-p
+:    *cache mode*. Required argument. Specify any supported option:
+     (write-)**back**, (write-)**thru** or (write-)**around**. Their respective
+     implications are denoted below.
+
+-s
+:    *cache size*. Optional argument. By default, flashcache will use the
+     auto-detected full cache device size. When present, the given cache size is used
+     instead. The expected units are sectors, however any value can be suffixed by
+     "k", "m" or "g" to interpret the argument in kilo-, mega- or gigabytes
+     respectively.
+
+-b
+:    *block size*. Optional argument. Defaults to 4KB. Must be a power of 2.
+     The default units is sectors. However, *k* can be specified as unit type as
+     well. (A 4KB blocksize is the correct choice for the vast majority of
+     applications.
+
+-f
+:    force create. Bypass all sanity checks (for example for the sector size).
+Use with care.
+
+
+# CACHING MODES
+
+The following caching modes are supported:
+
+*Writethrough* (**thru**) - safest mode, all writes are cached to the cache
+device but are also being written to disk immediately.  If the used cache device has
+a lower write performance than the backend disk (many early generation SSD
+drives manufactured between 2008-2010 are known for such a poor write
+performance) enabling the writethrough mode may decrease the system write
+performance. All disk reads are cached (tunable through flashcache's */proc*
+interface).
+
+*Writearound* (**ardound**) - again, very safe, writes are not written to the
+cache device, but directly to the backend disk instead.  Disk blocks will only
+be cached after they are read.  All disk reads are cached (tunable through
+flashcache's */proc* interface).
+
+*Writeback* (**back**) - fastest mode but less safe.  Writes only go to the
+cache device initially, and are being written to the backend disk later,
+depending on configured system policie.  All disk reads are
+cached (tunable through flashcache's */proc* interface).
+
+
+# CACHE PERSISTENCE
+
+Writethru and Writearound caches are not persistent across a device removal
+or a reboot. Only Writeback caches are persistent across device removals
+and reboots.  This reinforces 'writeback is fastest', 'writethrough is safest'.
+
+
+# EXAMPLES
+
+**flashcache_create** -p back -s 1g -b 4k cachedev /dev/sdc /dev/sdb
+:   Creates a 1GB writeback cache volume with a 4KB block size on the cache
+    device /dev/sdc to cache the disk volume /dev/sdb. The name of the device
+    created is "cachedev".
+
+
+**flashcache_create** -p thru -s 2097152 -b 8 cachedev /dev/sdc /dev/sdb
+:   Same as above but creates a write through cache with units specified in
+    sectors instead. The name of the device created is "cachedev".
+
+
+# SEE ALSO
+
+`flashcache_load`(8), `flashcache_destroy`(8)
+
+*README* and other documents in **/usr/share/doc/flashcache-utils**. In
+particular, see **flashcache-sa-guide.txt** for configuring the flashcache
+kernel module through its */proc* interface.
+
+The flashcache source code and all documentation may be downloaded from
+<https://github.com/facebook/flashcache/>.
+
+
+# AUTHORS
+
+Flashcache is developed by Mohan Srinivasan <mohan@fb.com>
+
+This man page was written by Dmitry Smirnov <onlyjob@member.fsf.org>
+for Debian GNU/Linux (but may be used by others).
+

@@ -1,0 +1,69 @@
+% FLASHCACHE(7) flashcache
+%
+% September 2011
+
+# NAME
+
+flashcache - overview of operation
+
+# SYNOPSIS
+
+modprobe flashcache
+
+Flashcache consists of a kernel module and userspace utilities. The module is
+named "flashcache". The kernel module can be controlled with *flashcache_create*(8),
+*flashcache_load*(8) and *flashcache_destroy*(8) utilities.
+
+
+# DESCRIPTION
+
+Flashcache is a block cache for Linux, built as a kernel module,
+using the device mapper. Flashcache supports **writeback**, **writethrough** and
+**writearound** caching modes. See *flashcache_create*(8) for a description
+of caching modes.
+
+Flascache allows one to use a fast block device such as Solid State Drives (SSD)
+as cache to accelerate a slower drive used as backstore. 
+
+Originally, Flashcache was built as a block device cache for I/O intensive
+database applications, for example to run an accelerated InnoDB store for
+*mysqld*(8), but it can be used as general purpose backend for filesystems as
+well.
+
+
+# USAGE
+
+Before using Flashcache, it might be a good idea to check if device mapper works
+properly. Assuming the partition /dev/md0p1 shall be used as flash cache, one
+may try to create a linear device with following command:
+
+**echo 0 1024 linear /dev/md0p1 0 | dmsetup create tmpdisk**
+
+It this works, *flashcache_create* should be able to create its device.
+
+Remove tmpdisk with command:
+
+**dmsetup remove tmpdisk**
+
+Before creating a flashcache device using the *flashcache_create* command, the
+deivce must not be mounted.
+
+
+# SEE ALSO
+
+`flashcache_create`(8), `flashcache_load`(8), `flashcache_destroy`(8)
+
+*README* and other documents in **/usr/share/doc/flashcache-utils**. In
+particular, see **flashcache-sa-guide.txt** for configuring the flashcache
+kernel module through its */proc* interface.
+
+The flashcache source code and all documentation may be downloaded from
+<https://github.com/facebook/flashcache/>.
+
+
+# AUTHORS
+
+Flashcache is developed by Mohan Srinivasan <mohan@fb.com>
+
+This man page was written by Dmitry Smirnov <onlyjob@member.fsf.org>
+for Debian GNU/Linux (but may be used by others).
