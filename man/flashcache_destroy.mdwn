@@ -4,12 +4,12 @@
 
 # NAME
 
-flashcache_load - destroy an existing flashcache volume
+flashcache_destroy - destroy an existing flashcache volume
 
 
 # DESCRIPTION
 
-The purpose of the **flashcache_load** command is to Clear all meta data from
+The purpose of the **flashcache_destroy** command is to Clear all meta data from
 cache device. Beware, this will cause data loss on the affected devices. 
 
 
