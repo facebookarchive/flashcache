@@ -252,7 +252,8 @@ sub get_dmsetup_table{
         $line =~ m/cache mode\((\w+)/;
         $dmsetup_table{cache_mode} = $1;
       } 
-      $line =~ m/(\/\w+\/\w+).*\((\/\w+\/\w+)/;
+      #$line =~ m/(\/\w+\/\w+).*\((\/\w+\/\w+)/; # bugfix for Issue #1 of https://github.com/NinGoo/flashstat
+      $line =~ m/(\/[^\s]{1,})\).*\((\/[^\s]{1,})\)/;
       $dmsetup_table{ssd_dev} = $1;
       $dmsetup_table{disk_dev} = $2;
     }
