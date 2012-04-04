@@ -1106,7 +1106,12 @@ init:
 	dmc->sysctl_max_pids = MAX_PIDS;
 	dmc->sysctl_pid_expiry_secs = PID_EXPIRY_SECS;
 	dmc->sysctl_reclaim_policy = FLASHCACHE_FIFO;
+	dmc->sysctl_cache_read_freq = 100;
+	dmc->sysctl_cache_write_freq = 100;
+	dmc->sysctl_split_io_chunk_size = 200;
+	dmc->sysctl_split_io_by_usec = 1;
 	dmc->sysctl_zerostats = 0;
+	dmc->sysctl_background_sync_active = 1;
 	dmc->sysctl_error_inject = 0;
 	dmc->sysctl_fast_remove = 0;
 	dmc->sysctl_cache_all = 1;

@@ -1077,6 +1077,10 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	 */
 	if (atomic_read(&dmc->remove_in_prog))
 		return;
+
+	if (unlikely(!dmc->sysctl_background_sync_active))
+		return;
+
 	writes_list = kmalloc(dmc->assoc * sizeof(struct dbn_index_pair), GFP_NOIO);
 	if (unlikely(dmc->sysctl_error_inject & WRITES_LIST_ALLOC_FAIL)) {
 		if (writes_list)

@@ -279,7 +279,12 @@ struct cache_c {
 	int sysctl_max_pids;
 	int sysctl_pid_expiry_secs;
 	int sysctl_reclaim_policy;
+	int sysctl_cache_read_freq;
+	int sysctl_cache_write_freq;
+	int sysctl_split_io_chunk_size;
+	int sysctl_split_io_by_usec;
 	int sysctl_zerostats;
+	int sysctl_background_sync_active;
 	int sysctl_error_inject;
 	int sysctl_fast_remove;
 	int sysctl_cache_all;
