@@ -226,7 +226,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)
 			task = find_task_by_vpid(node->pid);
 #else
-			ask = pid_task(find_vpid(node->pid), PIDTYPE_PID);
+			task = pid_task(find_vpid(node->pid), PIDTYPE_PID);
 #endif
 			/*
 			 * If that task was found, don't remove it !
@@ -338,7 +338,7 @@ flashcache_uncacheable(struct cache_c *dmc, struct bio *bio)
 		 * do a final check to see if this is sequential i/o.  If
 		 * the relevant sysctl is set, we will skip it.
 		 */
-		dontcache = skip_sequential_io(dmc, bio);
+		if (!dontcache) dontcache = skip_sequential_io(dmc, bio);
 			
 	} else { /* cache nothing */
 		/* If the tid has been whitelisted, we cache 
