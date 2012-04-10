@@ -102,9 +102,8 @@ flashcache_start() {
     # actually start up the resource here (make sure to immediately
     # exit with an $OCF_ERR_ error code if anything goes seriously
     # wrong)
-    ocf_run flashcache_load ${OCF_RESKEY_name} \
-	${OCF_RESKEY_cache_device} \
-	${OCF_RESKEY_device} || exit $OCF_ERR_GENERIC
+    ocf_run flashcache_load ${OCF_RESKEY_cache_device} \
+	 || exit $OCF_ERR_GENERIC
 
     # After the resource has been started, check whether it started up
     # correctly. If the resource starts asynchronously, the agent may
