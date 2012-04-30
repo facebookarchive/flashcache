@@ -6,7 +6,7 @@ EXTRA_CFLAGS += -I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\"
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux 
 
 # Check for RHEL/CentOS
-RHEL5_VER ?= $(shell grep 5.[0-9] /etc/redhat-release)
+RHEL5_VER ?= $(shell  if [ -e /etc/redhat-release ]; then grep 5.[0-9] /etc/redhat-release; else false; fi)
 RHEL5_SETUP :=
 ifneq "$(RHEL5_VER)" ""
 	RHEL5_SETUP := rhel5-setup
