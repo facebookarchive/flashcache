@@ -13,6 +13,7 @@ use POSIX qw(strftime);
 use strict;
 use Getopt::Long;
 use Term::ANSIColor;
+use File::Basename;
 Getopt::Long::Configure qw(no_ignore_case);
 $SIG{TERM} = $SIG{INT} = \&reset_color;
 
@@ -118,7 +119,7 @@ sub get_sysctl{
   my @lines = split(/\n/, $tmp);
   foreach my $line (@lines){
     if($line =~ /\+/){ # for new version of flashcache sysctl has per ssd+disk dev parameter
-      my $dev_device = $dmsetup_table{ssd_dev}."+".$dmsetup_table{disk_dev};
+      my $dev_device = basename($dmsetup_table{ssd_dev})."+".basename($dmsetup_table{disk_dev});
       $dev_device =~ s/\/dev\///g;
       $flashcache_stats_new_version = "/proc/flashcache/".$dev_device."/flashcache_stats";
       next if($line !~ /\Q$dev_device\E/);
