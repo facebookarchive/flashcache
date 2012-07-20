@@ -1,10 +1,15 @@
 COMMIT_REV ?= $(shell git describe  --always --abbrev=12)
 CFLAGS += -I.. -I. -DCOMMIT_REV="\"$(COMMIT_REV)\"" -g
-PROGRAMS += flashcache_create flashcache_destroy flashcache_load flashcache_setioctl
+PROGRAMS += flashcache_create flashcache_destroy flashcache_load flashcache_setioctl get_agsize
 INSTALL_DIR = $(DESTDIR)/sbin/
 
 .PHONY:all
 all: $(PROGRAMS)
+
+get_agsize: get_agsize.o
+	$(CC) $^ -o $@
+
+-include get_agsize.d
 
 flashcache_create: flashcache_create.o
 	$(CC) $^ -o $@
