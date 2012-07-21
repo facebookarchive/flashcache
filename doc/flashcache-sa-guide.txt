@@ -416,6 +416,28 @@ corrupt data here.
 You can work around this by setting file permissions on files in 
 the flashcache volume appropriately.
 
+Why is my cache only (<< 100%) utilized ?
+=======================================
+(Answer contributed by Will Smith)
+
+- There is essentially a  1:many mapping between SSD blocks and HDD blocks.
+- In more detail, a HDD block gets hashed to a set on SSD which contains by 
+  default 512 blocks.  It can only be stored in that set on SSD, nowhere else.
+
+So with a simplified SSD containly only 3 sets:
+
+SSD = 1 2 3 , and a HDD with 9 sets worth of data, the HDD sets would map to the SSD 
+sets like this:
+
+HDD: 1 2 3 4 5 6 7 8 9
+SSD: 1 2 3 1 2 3 1 2 3
+
+So if your data only happens to live in HDD sets 1 and 4, they will compete for 
+SSD set 1 and your SSD will at most become 33% utilized.
+
+If you use XFS you can tune the XFS agsize/agcount to try and mitigate this 
+(described next section).
+
 
 Tuning XFS for better flashcache performance :
 ============================================
@@ -497,6 +519,8 @@ agsize % C = (1 - (1/agcount))*C
 agsize * agcount ~= V
 
 Works just as well as the formula above.
+
+This computation has been implemented in the utils/get_agsize utility.
 
 Tuning Sequential IO Skipping for better flashcache performance
 ===============================================================
