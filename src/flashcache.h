@@ -260,8 +260,7 @@ struct cache_c {
 #define PENDING_JOB_HASH_SIZE		32
 	struct pending_job *pending_job_hashbuckets[PENDING_JOB_HASH_SIZE];
 	
-	struct cache_c	*next_cache;
-
+	struct list_head cache_list;
 	void *sysctl_handle;
 
 	// DM virtual device name, stored in superblock and restored on load
