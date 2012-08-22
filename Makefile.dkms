@@ -1,5 +1,6 @@
 COMMIT_REV := $(shell git describe  --always --abbrev=12)
 DKMS_DEST ?= /var/lib/dkms/flashcache/$(COMMIT_REV)/source
+KERNEL_VERSION ?= $(shell uname -r)
 # statically link for inclusion in initramfs
 CFLAGS += -static
 export COMMIT_REV CFLAGS
@@ -11,11 +12,11 @@ all: install
 
 .PHONY: install
 install: build utils
-	dkms install -m flashcache -v $(COMMIT_REV)
+	dkms install -m flashcache -v $(COMMIT_REV) -k $(KERNEL_VERSION)
 
 .PHONY: build
 build: src_install
-	dkms build -m flashcache -v $(COMMIT_REV)
+	dkms build -m flashcache -v $(COMMIT_REV) -k $(KERNEL_VERSION)
 
 .PHONY: src_install
 src_install:
