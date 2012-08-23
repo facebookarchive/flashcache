@@ -16,6 +16,14 @@ ifneq "$(RHEL5_VER)" ""
 	KERNEL_TREE := $(RHEL5_TREE)
 endif
 
+# Check for OpenVZ (/proc/vz)
+OPENVZ_VER ?= $(shell if [ -e /proc/vz ]; then grep 5.[0-9] /etc/redhat-release; else false; fi)
+ifneq "$(OPENVZ_VER)" ""
+        RHEL5_SPEC := /usr/src/redhat/SPECS/kernel-ovz.spec
+        RHEL5_TREE := /usr/src/redhat/BUILD/ovzkernel-2.6.18/linux-$(shell uname -r).$(shell uname -i)
+        KERNEL_TREE := $(RHEL5_TREE)
+endif
+
 obj-m += flashcache.o
 flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o flashcache_procfs.o
 

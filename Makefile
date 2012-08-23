@@ -9,6 +9,13 @@ ifneq "$(RHEL5_VER)" ""
 	KERNEL_TREE := $(RHEL5_TREE)
 endif
 
+# Check for OpenVZ (/proc/vz)
+OPENVZ_VER ?= $(shell if [ -e /proc/vz ]; then grep 5.[0-9] /etc/redhat-release; else false; fi)
+ifneq "$(OPENVZ_VER)" ""
+        RHEL5_TREE := /usr/src/redhat/BUILD/ovzkernel-2.6.18/linux-$(shell uname -r).$(shell uname -i)
+        KERNEL_TREE := $(RHEL5_TREE)
+endif
+
 all:
 	$(MAKE) -C src KERNEL_TREE=$(KERNEL_TREE) PWD=$(shell pwd)/src all
 
