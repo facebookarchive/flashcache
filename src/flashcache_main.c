@@ -188,6 +188,11 @@ flashcache_io_callback(unsigned long error, void *context)
 		error = -EIO;
 		DMERR("flashcache_io_callback: io error %ld block %lu action %d", 
 		      error, job->job_io_regions.disk.sector, job->action);
+		if (!dmc->bypass_cache && dmc->cache_mode != FLASHCACHE_WRITE_BACK) {
+			DMERR("flashcache_io_callback: switching %s to BYPASS mode",
+			      dmc->cache_devname);
+			dmc->bypass_cache = 1;
+		}
 	}
 	job->error = error;
 	switch (job->action) {
@@ -295,7 +300,19 @@ flashcache_io_callback(unsigned long error, void *context)
 		}
 		break;
 	}
-	flashcache_bio_endio(bio, error, dmc, &job->io_start_time);
+        /*
+         * If we get an error in write through || write around modes,
+         * we try the disk directly, after invalidating the cached block.
+         * see flashcache_do_pending_error().
+         * XXX - We can do the same for writeback as well. But that is more
+         * work. (a) we cannot fall back to disk when a ssd read of a dirty
+         * cacheblock fails (b) we'd need to handle ssd metadata write
+	 * failures as well and fall back to disk in those cases as well.
+         */
+	if (likely(error == 0) || (dmc->cache_mode == FLASHCACHE_WRITE_BACK)) {
+		flashcache_bio_endio(bio, error, dmc, &job->io_start_time);
+		job->bio = NULL;
+	}
 	/* 
 	 * The INPROG flag is still set. We cannot turn that off until all the pending requests
 	 * processed. We need to loop the pending requests back to a workqueue. We have the job,
@@ -346,9 +363,14 @@ flashcache_do_pending_error(struct kcached_job *job)
 	struct cache_c *dmc = job->dmc;
 	unsigned long flags;
 	struct cacheblock *cacheblk = &dmc->cache[job->index];
+	struct bio *bio = job->bio;
+	int error = job->error;
+	struct pending_job *pjob_list = NULL, *pjob = NULL;
 
-	DMERR("flashcache_do_pending_error: error %d block %lu action %d", 
-	      job->error, job->job_io_regions.disk.sector, job->action);
+	if (!dmc->bypass_cache) {
+		DMERR("flashcache_do_pending_error: error %d block %lu action %d", 
+		      job->error, job->job_io_regions.disk.sector, job->action);
+	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	VERIFY(cacheblk->cache_state & VALID);
 	/* Invalidate block if possible */
@@ -357,10 +379,43 @@ flashcache_do_pending_error(struct kcached_job *job)
 		dmc->flashcache_stats.pending_inval++;
 		cacheblk->cache_state &= ~VALID;
 		cacheblk->cache_state |= INVALID;
-	}
-	flashcache_free_pending_jobs(dmc, cacheblk, job->error);
+	} else
+		VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_BACK);
 	cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
+	/*
+	 * In case of an error in writeback or writearound modes, if there
+	 * are pending jobs, de-link them from the cacheblock so we can issue disk 
+	 * IOs below.
+	 */
+	if (bio != NULL) {
+		VERIFY(dmc->cache_mode != FLASHCACHE_WRITE_BACK);
+		pjob_list = flashcache_deq_pending(dmc, cacheblk - &dmc->cache[0]);
+		for (pjob = pjob_list ; pjob != NULL ; pjob = pjob->next) {
+			VERIFY(cacheblk->nr_queued > 0);
+			cacheblk->nr_queued--;
+		}
+		VERIFY(cacheblk->nr_queued == 0);
+	} else
+		flashcache_free_pending_jobs(dmc, cacheblk, job->error);
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	if (bio != NULL) {
+		/*
+		 * Cache (read/write) error in write through or write around
+		 * mode. Issue the IO directly to disk. We've already invalidated
+		 * the cache block above.
+		 */
+		if (!dmc->bypass_cache)  /* suppress massive console output */
+			DMERR("flashcache_do_pending_error: Re-launching errored IO"
+			      "to disk, after io error %d block %lu",
+			      error, bio->bi_sector);
+		flashcache_start_uncached_io(dmc, bio);
+		while (pjob_list != NULL) {
+			pjob = pjob_list;
+			pjob_list = pjob->next;
+			flashcache_start_uncached_io(dmc, pjob->bio);
+			flashcache_free_pending_job(pjob);
+		}
+	}
 	flashcache_free_cache_job(job);
 	if (atomic_dec_and_test(&dmc->nr_jobs))
 		wake_up(&dmc->destroyq);

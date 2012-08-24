@@ -270,6 +270,13 @@ struct cache_c {
 	char cache_devname[DEV_PATHLEN];
 	char disk_devname[DEV_PATHLEN];
 
+	/* 
+	 * If the SSD returns errors, in WRITETHRU and WRITEAROUND modes, 
+	 * bypass the cache completely. If the SSD dies or is removed, 
+	 * we want to continue sending requests to the device.
+	 */
+	int bypass_cache;
+
 	/* Per device sysctls */
 	int sysctl_io_latency_hist;
 	int sysctl_do_sync;
