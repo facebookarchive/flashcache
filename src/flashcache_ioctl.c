@@ -311,7 +311,11 @@ int
 flashcache_uncacheable(struct cache_c *dmc, struct bio *bio)
 {
 	int dontcache;
-	
+
+	if (unlikely(dmc->bypass_cache)) {
+		dontcache = 1;
+		goto out;
+	}
 	if (dmc->sysctl_cache_all) {
 		/* If the tid has been blacklisted, we don't cache at all.
 		   This overrides everything else */
