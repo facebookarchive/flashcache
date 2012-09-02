@@ -45,7 +45,9 @@ int verbose = 0;
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s ssd_devname [cachedev]\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-f] ssd_devname [cachedev]\n", pname);
+	fprintf(stderr, "\t-v verbose\n");
+	fprintf(stderr, "\t-f force load\n");
 #ifdef COMMIT_REV
 	fprintf(stderr, "git commit: %s\n", COMMIT_REV);
 #endif
@@ -102,19 +104,24 @@ main(int argc, char **argv)
 	sector_t disk_devsize, cache_devsize;
 	int ret;
 	int cache_mode;
+	int force = 0;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "v")) != -1) {
+	while ((c = getopt(argc, argv, "vf?")) != -1) {
 		switch (c) {
 		case 'v':
 			verbose = 1;
                         break;			
+		case 'f':
+			force = 1;
+			break;
 		case '?':
 			usage(pname);
+
 		}
 	}
-
-	if ((argc < 2) || (argc > 3)) {
+	
+	if ((argc < 2) || (argc > 4)) {
 		usage(pname);
 	}
 	
@@ -137,13 +144,13 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if ((strncmp(sb->cache_devname, ssd_devname, DEV_PATHLEN) == 0) && (argc == 2)) {
+	if ((strncmp(sb->cache_devname, ssd_devname, DEV_PATHLEN) == 0) && (!(argc > 2 && argc-optind>0) )) {
 		fprintf(stderr, "%s: Upgrading older v2 superblock format, please supply cachedev virtual device name\n", pname);
 		usage(pname);
 	}
 	
 	// switch to new vdev name if requested by load command
-	if (argc == 3) {
+	if (argc > 2 && argc-optind>0) {
 		cachedev = argv[optind];
 	} else {
 		cachedev = sb->cache_devname;
@@ -169,9 +176,26 @@ main(int argc, char **argv)
 		exit(1);		
 	}
 	if (disk_devsize != sb->disk_devsize) {
-		fprintf(stderr, "%s: Disk size mismatch, expect %lu, given %lu\n", 
-			pname, sb->disk_devsize, disk_devsize);
-		exit(1);		
+		if (force) {
+			if ( sb->cache_sb_state == CACHE_MD_STATE_DIRTY ) {
+				/* Device size dont match but we need to load anyway to clean dirty blocks */
+				fprintf(stderr, "WARNING: %s: Disk size mismatch, expect %lu, given %lu."
+					"Loading forced, recreate flashcache device as soon as possible.\n",\
+					 pname, sb->disk_devsize, disk_devsize);
+			} else {
+				fprintf(stderr, "Disk size mismatch. No dirty blocks was found.\n");
+				exit(1);
+			}
+
+		} else {
+			fprintf(stderr, "%s: Disk size mismatch, expect %lu, given %lu.", 
+				pname, sb->disk_devsize, disk_devsize);
+			if ( sb->cache_sb_state == CACHE_MD_STATE_DIRTY ) {
+				fprintf(stderr, "Dirty blocks found, try to use -f to force.");
+			}
+			fprintf(stderr, "\n");
+			exit(1);		
+		}
 	}
 	/* 
 	 * Device Names and sizes match the ones stored in the cache superblock, 
