@@ -15,11 +15,11 @@ MOUNTPOINT=
 FLASHCACHE_NAME=
 
 # Just a check, to validate the above params are set
-[ -n $SSD_DISK ] || exit 10
-[ -n $BACKEND_DISK ] || exit 11
-[ -n $CACHEDEV_NAME ] || exit 12
-[ -n $MOUNTPOINT ] || exit 13
-[ -n $FLASHCACHE_NAME ] || exit 14
+[ -n "$SSD_DISK" ] && exit 10
+[ -n "$BACKEND_DISK" ] && exit 11
+[ -n "$CACHEDEV_NAME" ] && exit 12
+[ -n "$MOUNTPOINT" ] && exit 13
+[ -n "$FLASHCACHE_NAME" ] && exit 14
 
 # Source function library.
 . /etc/rc.d/init.d/functions
