@@ -147,6 +147,30 @@ Flashcache stats are also reported in
 /proc/flashcache/<cache name>/flashcache_stats
 for easier parseability.
 
+Using Flashcache sysVinit script (Redhat based systems):
+=======================================================
+Kindly note that, this sections only applies to the Redhat based systems. Use
+'utils/flashcache' from the repository as the sysvinit script.
+
+This script is to load, unload and get statistics of an existing flashcache 
+writeback cache volume. It helps in loading the already created cachedev during 
+system boot and removes the flashcache volume before system halt happens.
+
+This script is necessary, because, when a flashcache volume is not removed 
+before the system halt, kernel panic occurs.
+
+Configuring the script using chkconfig:
+
+1. Copy 'utils/flashcache' from the repo to '/etc/init.d/flashcache'
+2. Make sure this file has execute permissions,
+   'sudo chmod +x /etc/init.d/flashcache'.
+3. Edit this file and specify the values for the following variables
+   SSD_DISK, BACKEND_DISK, CACHEDEV_NAME, MOUNTPOINT, FLASHCACHE_NAME
+4. Modify the headers in the file if necessary.
+   By default, it starts in runlevel 3, with start-stop priority 90-10
+5. Register this file using chkconfig
+   'chkconfig --add /etc/init.d/flashcache'
+
 Cache Blocksize selection :
 =========================
 Cache blocksize selection is critical for good cache utilization and
