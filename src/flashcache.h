@@ -529,9 +529,6 @@ int flashcache_ctr(struct dm_target *ti, unsigned int argc,
 		   char **argv);
 void flashcache_dtr(struct dm_target *ti);
 
-int flashcache_status(struct dm_target *ti, status_type_t type,
-		      char *result, unsigned int maxlen);
-
 struct kcached_job *flashcache_alloc_cache_job(void);
 void flashcache_free_cache_job(struct kcached_job *job);
 struct pending_job *flashcache_alloc_pending_job(struct cache_c *dmc);
