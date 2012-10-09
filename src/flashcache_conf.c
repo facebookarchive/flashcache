@@ -1088,8 +1088,11 @@ init:
 
 	dmc->sync_index = 0;
 	dmc->clean_inprog = 0;
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,6,0)
 	ti->split_io = dmc->block_size;
+#else
+	ti->max_io_len = dmc->block_size;
+#endif
 	ti->private = dmc;
 
 	/* Cleaning Thresholds */
@@ -1507,9 +1510,15 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
  *  Output cache stats upon request of device status;
  *  Output cache configuration upon request of table status.
  */
-int 
+int
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
 flashcache_status(struct dm_target *ti, status_type_t type,
-	     char *result, unsigned int maxlen)
+		  unsigned int unused_status_flags,
+		  char *result, unsigned int maxlen)
+#else
+flashcache_status(struct dm_target *ti, status_type_t type,
+		  char *result, unsigned int maxlen)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
 	
