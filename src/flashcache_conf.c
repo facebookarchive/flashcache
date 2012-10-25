@@ -589,7 +589,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 	 * We don't know what the preferred block size is, just read off 
 	 * the default md blocksize.
 	 */
-	header = (struct flash_superblock *)vmalloc(DEFAULT_MD_BLOCK_SIZE);
+	header = (struct flash_superblock *)vmalloc(DEFAULT_MD_BLOCK_SIZE_BYTES);
 	if (!header) {
 		DMERR("flashcache_writeback_load: Unable to allocate memory");
 		return 1;
