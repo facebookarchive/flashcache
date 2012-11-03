@@ -1778,7 +1778,8 @@ flashcache_map(struct dm_target *ti, struct bio *bio,
 	if (unlikely(dmc->sysctl_pid_do_expiry && 
 		     (dmc->whitelist_head || dmc->blacklist_head)))
 		flashcache_pid_expiry_all_locked(dmc);
-	if ((to_sector(bio->bi_size) != dmc->block_size) ||
+	if (unlikely(dmc->bypass_cache) ||
+	    (to_sector(bio->bi_size) != dmc->block_size) ||
 	    (bio_data_dir(bio) == WRITE && 
 	     (dmc->cache_mode == FLASHCACHE_WRITE_AROUND || flashcache_uncacheable(dmc, bio)))) {
 		queued = flashcache_inval_blocks(dmc, bio);
