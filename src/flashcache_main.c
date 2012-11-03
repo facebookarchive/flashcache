@@ -180,6 +180,7 @@ flashcache_io_callback(unsigned long error, void *context)
 	unsigned long flags;
 	int index = job->index;
 	struct cacheblock *cacheblk = &dmc->cache[index];
+	unsigned long disk_error = 0;
 
 	VERIFY(index != -1);		
 	bio = job->bio;
@@ -212,8 +213,10 @@ flashcache_io_callback(unsigned long error, void *context)
 			push_io(job);
 			schedule_work(&_kcached_wq);
 			return;
-		} else
+		} else {
+			disk_error = -EIO;
 			dmc->flashcache_errors.disk_read_errors++;			
+		}
 		break;
 	case READCACHE:
 		DPRINTK("flashcache_io_callback: READCACHE %d",
@@ -296,6 +299,7 @@ flashcache_io_callback(unsigned long error, void *context)
 				 * the IO to succeed as long as the disk write suceeded.
 				 * and invalidate the cache block.
 				 */
+			        disk_error = -EIO;
 				dmc->flashcache_errors.disk_write_errors++;
 		}
 		break;
@@ -308,8 +312,13 @@ flashcache_io_callback(unsigned long error, void *context)
          * work. (a) we cannot fall back to disk when a ssd read of a dirty
          * cacheblock fails (b) we'd need to handle ssd metadata write
 	 * failures as well and fall back to disk in those cases as well.
+	 * 
+	 * We track disk errors separately. If we get a disk error (in 
+	 * writethru or writearound modes) end the IO right here.
          */
-	if (likely(error == 0) || (dmc->cache_mode == FLASHCACHE_WRITE_BACK)) {
+	if (likely(error == 0) || 
+	    (dmc->cache_mode == FLASHCACHE_WRITE_BACK) ||
+	    disk_error != 0) {
 		flashcache_bio_endio(bio, error, dmc, &job->io_start_time);
 		job->bio = NULL;
 	}
@@ -354,8 +363,9 @@ flashcache_free_pending_jobs(struct cache_c *dmc, struct cacheblock *cacheblk,
 /* 
  * Common error handling for everything.
  * 1) If the block isn't dirty, invalidate it.
- * 2) Error all pending IOs that totally or partly overlap this block.
- * 3) Free the job.
+ * 2) De-link all pending IOs that totally or partly overlap this block.
+ * 3) If it was an SSD error (bio != NULL), issue the invalidated block IO and other de-linked pending IOs uncached to disk. 
+ * 4) Free the job.
  */
 static void
 flashcache_do_pending_error(struct kcached_job *job)
@@ -383,7 +393,7 @@ flashcache_do_pending_error(struct kcached_job *job)
 		VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_BACK);
 	cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 	/*
-	 * In case of an error in writeback or writearound modes, if there
+	 * In case of an error in writethrough or writearound modes, if there
 	 * are pending jobs, de-link them from the cacheblock so we can issue disk 
 	 * IOs below.
 	 */
