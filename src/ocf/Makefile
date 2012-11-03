@@ -1,7 +1,7 @@
 COMMIT_REV ?= $(shell git describe  --always --abbrev=12)
 CFLAGS += 
 PROGRAMS += flashcache 
-INSTALL_DIR = /usr/lib/ocf/resource.d/flashcache
+INSTALL_DIR = $(DESTDIR)/usr/lib/ocf/resource.d/flashcache
 
 .PHONY:all
 all: $(PROGRAMS)
