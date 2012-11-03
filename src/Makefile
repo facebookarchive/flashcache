@@ -33,8 +33,7 @@ utils:
 .PHONY: modules_install
 modules_install: modules
 	install -o root -g root -m 0755 -d $(DESTDIR)/lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/
-	install -o root -g root -m 0755 flashcache.ko $(DESTDIR)/lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/
-	depmod -a
+	install -o root -g root -m 0644 flashcache.ko $(DESTDIR)/lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/
 
 .PHONY: utils_install
 utils_install: utils
@@ -44,8 +43,12 @@ utils_install: utils
 ocf_install:
 	make -C ocf install
 
+.PHONY: depmod
+depmod:
+	depmod -a
+
 .PHONY: install
-install: modules_install utils_install ocf_install
+install: modules_install utils_install ocf_install depmod
 
 .PHONY: clean
 clean:
