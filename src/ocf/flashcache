@@ -92,12 +92,12 @@ flashcache_start() {
 	exit $OCF_ERR_INSTALLED
     fi
 
-    if [ ! -e /proc/flashcache_version ]; then
+    if [ ! -e /proc/flashcache/flashcache_version ]; then
 	ocf_log debug "Flashcache support not loaded, loading module"
 	ocf_run modprobe -v flashcache || exit $OCF_ERR_INSTALLED
     fi
 
-    ocf_log debug "Flashcache module information obtained from kernel: `cat /proc/flashcache_version`"
+    ocf_log debug "Flashcache module information obtained from kernel: `cat /proc/flashcache/flashcache_version`"
 
     # actually start up the resource here (make sure to immediately
     # exit with an $OCF_ERR_ error code if anything goes seriously
