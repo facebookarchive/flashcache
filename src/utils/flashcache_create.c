@@ -40,6 +40,8 @@
 #include <linux/types.h>
 #include <flashcache.h>
 
+#undef COMMIT_REV
+
 void
 usage(char *pname)
 {
@@ -342,7 +344,7 @@ main(int argc, char **argv)
 			ssd_devname, disk_devname);
 		check_sure();
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %d %lu"
 		" | dmsetup create %s",
 		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
 		cache_size, associativity, md_block_size,
