@@ -40,6 +40,7 @@
 #include <linux/seq_file.h>
 #include <linux/hardirq.h>
 #include <asm/kmap_types.h>
+#include <linux/math64.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
@@ -288,7 +289,7 @@ flashcache_wt_io_callback(unsigned long error, void *context)
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (error || invalid) {
 			if (invalid)
-				DMERR("flashcache_wt_io_callback: cache fill invalidation, sector %lu, size %u",
+				DMERR("flashcache_wt_io_callback: cache fill invalidation, sector %llu, size %u",
 				      bio->bi_sector, bio->bi_size);
 			flashcache_bio_endio(bio, error);
 			spin_lock_irqsave(&dmc->cache_spin_lock, flags);
@@ -451,8 +452,8 @@ hash_block(struct cache_c *dmc, sector_t dbn)
 
 	value = (unsigned long)
 		(dbn >> (dmc->block_shift + dmc->consecutive_shift));
-	set_number = value % (dmc->size >> dmc->consecutive_shift);
-	DPRINTK("Hash: %llu(%lu)->%lu", dbn, value, set_number);
+	set_number = value % (unsigned long)(dmc->size >> dmc->consecutive_shift);
+	DPRINTK("Hash: %llu(%llu)->%llu", dbn, value, set_number);
  	return set_number;
 }
 
@@ -495,7 +496,7 @@ find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 {
 	int i;
 	int end_index = start_index + dmc->assoc;
-	int set = start_index / dmc->assoc;
+	int set =div64_u64(start_index,dmc->assoc);
 	int slots_searched = 0;
 	
 	/* 
@@ -535,7 +536,7 @@ cache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 {
 	sector_t dbn = bio->bi_sector;
 #if DMC_DEBUG
-	int io_size = to_sector(bio->bi_size);
+	int io_size = to_sector64(bio->bi_size);
 #endif
 	unsigned long set_number = hash_block(dmc, dbn);
 	int invalid = -1, oldest_clean = -1;
@@ -543,16 +544,16 @@ cache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 	int ret;
 
 	start_index = dmc->assoc * set_number;
-	DPRINTK("Cache read lookup : dbn %llu(%lu), set = %d",
+	DPRINTK("Cache read lookup : dbn %llu(%llu), set = %d",
 		dbn, io_size, set_number);
 	ret = find_valid_dbn(dmc, dbn, start_index, index);
 	if (ret == VALID || ret == INPROG || ret == CACHEREADINPROG) {
-		DPRINTK_LITE("Cache read lookup: Block %llu(%lu): ret %d VALID/INPROG index %d",
+		DPRINTK_LITE("Cache read lookup: Block %llu(%llu): ret %d VALID/INPROG index %d",
 			     dbn, io_size, ret, *index);
 		/* We found the exact range of blocks we are looking for */
 		return ret;
 	}
-	DPRINTK_LITE("Cache read lookup: Block %llu(%lu):%d INVALID",
+	DPRINTK_LITE("Cache read lookup: Block %llu(%llu):%d INVALID",
 		     dbn, io_size, ret);
 	VERIFY(ret == -1);
 	find_invalid_dbn(dmc, start_index, &invalid);
@@ -567,15 +568,15 @@ cache_lookup(struct cache_c *dmc, struct bio *bio, int *index)
 	 */
 	*index = start_index + dmc->assoc;
 	if (invalid != -1) {
-		DPRINTK_LITE("Cache read lookup MISS (INVALID): dbn %llu(%lu), set = %d, index = %d, start_index = %d",
+		DPRINTK_LITE("Cache read lookup MISS (INVALID): dbn %llu(%llu), set = %d, index = %d, start_index = %d",
 			     dbn, io_size, set_number, invalid, start_index);
 		*index = invalid;
 	} else if (oldest_clean != -1) {
-		DPRINTK_LITE("Cache read lookup MISS (VALID): dbn %llu(%lu), set = %d, index = %d, start_index = %d",
+		DPRINTK_LITE("Cache read lookup MISS (VALID): dbn %llu(%llu), set = %d, index = %d, start_index = %d",
 			     dbn, io_size, set_number, oldest_clean, start_index);
 		*index = oldest_clean;
 	} else {
-		DPRINTK_LITE("Cache read lookup MISS (NOROOM): dbn %llu(%lu), set = %d",
+		DPRINTK_LITE("Cache read lookup MISS (NOROOM): dbn %llu(%llu), set = %d",
 			dbn, io_size, set_number);
 	}
 	if (*index < (start_index + dmc->assoc))
@@ -598,7 +599,7 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio,
 	if (index != -1)
 		job->disk.count = dmc->block_size;
 	else
-		job->disk.count = to_sector(bio->bi_size);
+		job->disk.count = to_sector64(bio->bi_size);
 	job->cache.bdev = dmc->cache_dev->bdev;
 	if (index != -1) {
 		job->cache.sector = index << dmc->block_shift;
@@ -660,7 +661,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		dmc->cache_state[index] = CACHEREADINPROG;
 		dmc->cache_hits++;
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
+		DPRINTK_LITE("Cache read: Block %llu(%llu), index = %d:%s",
 			     bio->bi_sector, bio->bi_size, index, "CACHE HIT");
 		job = new_kcached_job(dmc, bio, index);
 		if (unlikely(job == NULL)) {
@@ -702,7 +703,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 		 * cache.
 		 */
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
-		DPRINTK_LITE("Cache read: Block %llu(%lu):%s",
+		DPRINTK_LITE("Cache read: Block %llu(%llu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
 		/* Start uncached IO */
 		flashcache_wt_start_uncached_io(dmc, bio);
@@ -721,7 +722,7 @@ cache_read(struct cache_c *dmc, struct bio *bio)
 	dmc->cache[index].dbn = bio->bi_sector;
 	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 
-	DPRINTK_LITE("Cache read: Block %llu(%lu), index = %d:%s",
+	DPRINTK_LITE("Cache read: Block %llu(%llu), index = %d:%s",
 		bio->bi_sector, bio->bi_size, index, "CACHE MISS & REPLACE");
 	cache_read_miss(dmc, bio, index);
 }
@@ -758,7 +759,7 @@ cache_invalidate_block_set(struct cache_c *dmc, int set, sector_t io_start, sect
 			} else if (dmc->cache_state[i] >= INPROG) {
 				(*inprog_inval)++;
 				dmc->cache_state[i] = INPROG_INVALID;
-				DMERR("cache_invalidate_block_set: sector %lu, size %lu, rw %d",
+				DMERR("cache_invalidate_block_set: sector %llu, size %llu, rw %d",
 				      io_start, io_end - io_start, rw);
 				DPRINTK_LITE("Cache invalidate: Block %llu INPROG",
 					     start_dbn);
@@ -776,7 +777,7 @@ static int
 cache_invalidate_blocks(struct cache_c *dmc, struct bio *bio)
 {	
 	sector_t io_start = bio->bi_sector;
-	sector_t io_end = bio->bi_sector + (to_sector(bio->bi_size) - 1);
+	sector_t io_end = bio->bi_sector + (to_sector64(bio->bi_size) - 1);
 	int start_set, end_set;
 	int inprog_inval_start = 0, inprog_inval_end = 0;
 	
@@ -861,7 +862,7 @@ flashcache_wt_map(struct dm_target *ti, struct bio *bio,
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
 	unsigned long flags;
-	int sectors = to_sector(bio->bi_size);
+	int sectors = to_sector64(bio->bi_size);
 
 	if (sectors <= 32)
 		size_hist[sectors]++;
@@ -874,14 +875,14 @@ flashcache_wt_map(struct dm_target *ti, struct bio *bio,
 	if (bio_barrier(bio))
 		return -EOPNOTSUPP;
 
-	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
+	VERIFY(to_sector64(bio->bi_size) <= dmc->block_size);
 
 	if (bio_data_dir(bio) == READ)
 		dmc->reads++;
 	else
 		dmc->writes++;		
 
-	if (to_sector(bio->bi_size) != dmc->block_size ||
+	if ((to_sector64(bio->bi_size) != dmc->block_size) ||
 	    (dmc->write_around_mode && (bio_data_dir(bio) == WRITE))) {
 		spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 		(void)cache_invalidate_blocks(dmc, bio);
@@ -1006,7 +1007,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27)
-	dmc->io_client = dm_io_client_create(FLASHCACHE_COPY_PAGES);
+	dmc->io_client = dm_io_client_create();
 	if (IS_ERR(dmc->io_client)) {
 		r = PTR_ERR(dmc->io_client);
 		ti->error = "Failed to create io client\n";
@@ -1049,13 +1050,13 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	/* dmc->size is specified in sectors here, and converted to blocks below */
 	if (argc >= 5) {
-		if (sscanf(argv[4], "%lu", &dmc->size) != 1) {
+		if (sscanf(argv[4], "%llu", &dmc->size) != 1) {
 			ti->error = "flashcache-wt: Invalid cache size";
 			r = -EINVAL;
 			goto bad4;
 		}
 	} else {
-		dmc->size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
+		dmc->size = to_sector64(dmc->cache_dev->bdev->bd_inode->i_size);
 	}
 
 	if (argc >= 6) {
@@ -1077,14 +1078,16 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	 * Convert size (in sectors) to blocks.
 	 * Then round size (in blocks now) down to a multiple of associativity 
 	 */
-	dmc->size /= dmc->block_size;
-	dmc->size = (dmc->size / dmc->assoc) * dmc->assoc;
+	dmc->size =div64_u64(dmc->size,dmc->block_size);
 
-	dev_size = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
+	dmc->size =div64_u64(dmc->size,dmc->assoc);
+	dmc->size=dmc->size*dmc->assoc;
+
+	dev_size = to_sector64(dmc->cache_dev->bdev->bd_inode->i_size);	
 	data_size = dmc->size * dmc->block_size;
 	if (data_size > dev_size) {
 		DMERR("Requested cache size exeeds the cache device's capacity" \
-		      "(%lu>%lu)",
+		      "(%llu>%llu)",
   		      data_size, dev_size);
 		ti->error = "flashcache-wt: Invalid cache size";
 		r = -EINVAL;
@@ -1095,8 +1098,8 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dmc->consecutive_shift = ffs(consecutive_blocks) - 1;
 
 	order = dmc->size * sizeof(struct cacheblock);
-	DMINFO("Allocate %luKB (%ldB per) mem for %lu-entry cache" \
-	       "(capacity:%luMB, associativity:%u, block size:%u " \
+	DMINFO("Allocate %lluKB (%uB per) mem for %llu-entry cache" \
+	       "(capacity:%lluMB, associativity:%u, block size:%u " \
 	       "sectors(%uKB))",
 	       order >> 10, sizeof(struct cacheblock), dmc->size,
 	       data_size >> (20-SECTOR_SHIFT), dmc->assoc, dmc->block_size,
@@ -1190,15 +1193,15 @@ cache_dtr(struct dm_target *ti)
 		int cache_pct;
 
 		if (dmc->reads > 0)
-			read_hit_pct = dmc->cache_hits * 100 / dmc->reads;
+			read_hit_pct =div64_u64((dmc->cache_hits * 100),dmc->reads);
 		else
 			read_hit_pct = 0;
 		DMINFO("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
 #ifdef FLASHCACHE_WT_CHECKSUMS
-		DMINFO("\tcache hits(%lu), cache hit percent (%d)\n"	\
-		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
-		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		DMINFO("\tcache hits(%llu), cache hit percent (%d)\n"	\
+		       "\treplacement(%llu), write replacement(%llu)\n"	\
+		       "\tread invalidates(%llu), write invalidates(%llu)\n" \
+		       "\tchecksum store (%llu), checksum valid (%llu), checksum invalid(%llu)\n",
 		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
 		       dmc->rd_invalidates, dmc->wr_invalidates,
 		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
@@ -1210,12 +1213,12 @@ cache_dtr(struct dm_target *ti)
 		       dmc->rd_invalidates, dmc->wr_invalidates);
 #endif
 		if (dmc->size > 0)
-			cache_pct = (dmc->cached_blocks * 100) / dmc->size;
+			cache_pct =div64_u64((dmc->cached_blocks * 100),dmc->size);
 		else 
 			cache_pct = 0;
 		DMINFO("conf:\n"\
-		       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
-		       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
+		       "\tcapacity(%lluM), associativity(%u), block size(%uK)\n" \
+		       "\ttotal blocks(%llu), cached blocks(%lu), cache percent(%d)\n",
 		       dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT), 
 		       dmc->size, dmc->cached_blocks, cache_pct);
@@ -1241,20 +1244,20 @@ flashcache_wt_status_info(struct cache_c *dmc, status_type_t type,
 	int sz = 0; /* DMEMIT */
 
 	if (dmc->reads > 0)
-		read_hit_pct = dmc->cache_hits * 100 / dmc->reads;
+		read_hit_pct =div64_u64((dmc->cache_hits * 100),dmc->reads);
 	else
 		read_hit_pct = 0;
 	DMEMIT("stats: \n\treads(%lu), writes(%lu)\n", dmc->reads, dmc->writes);
 
 #ifdef FLASHCACHE_WT_CHECKSUMS
 	if (dmc->write_around_mode == 0) {
-		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
-		       "\treplacement(%lu), write replacement(%lu)\n"	\
-		       "\tread invalidates(%lu), write invalidates(%lu)\n" \
-		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
-		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
-		       "\tcache reads(%lu), cache writes(%lu)\n"	\
-		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		DMEMIT("\tcache hits(%llu), cache hit percent (%d)\n"	\
+		       "\treplacement(%llu), write replacement(%llu)\n"	\
+		       "\tread invalidates(%llu), write invalidates(%llu)\n" \
+		       "\tuncached reads(%llu), uncached writes(%llu)\n"	\
+		       "\tdisk reads(%llu), disk writes(%llu)\n"		\
+		       "\tcache reads(%llu), cache writes(%llu)\n"	\
+		       "\tchecksum store (%llu), checksum valid (%llu), checksum invalid(%llu)\n",
 		       dmc->cache_hits, read_hit_pct, dmc->replace, dmc->cache_wr_replace,
 		       dmc->rd_invalidates, dmc->wr_invalidates, 
 		       dmc->uncached_reads, dmc->uncached_writes,
@@ -1262,12 +1265,12 @@ flashcache_wt_status_info(struct cache_c *dmc, status_type_t type,
 		       dmc->cache_reads, dmc->cache_writes,
 		       dmc->checksum_store, dmc->checksum_valid, dmc->checksum_invalid);
 	} else {
-		DMEMIT("\tcache hits(%lu), cache hit percent (%d)\n"	\
-		       "\treplacement(%lu), read invalidates(%lu) write invalidates(%lu)\n"	\
-		       "\tuncached reads(%lu), uncached writes(%lu)\n"	\
-		       "\tdisk reads(%lu), disk writes(%lu)\n"		\
-		       "\tcache reads(%lu), cache writes(%lu)\n"	\
-		       "\tchecksum store (%lu), checksum valid (%lu), checksum invalid(%lu)\n",
+		DMEMIT("\tcache hits(%llu), cache hit percent (%d)\n"	\
+		       "\treplacement(%llu), read invalidates(%llu) write invalidates(%llu)\n"	\
+		       "\tuncached reads(%llu), uncached writes(%llu)\n"	\
+		       "\tdisk reads(%llu), disk writes(%llu)\n"		\
+		       "\tcache reads(%llu), cache writes(%llu)\n"	\
+		       "\tchecksum store (%llu), checksum valid (%llu), checksum invalid(%llu)\n",
 		       dmc->cache_hits, read_hit_pct, dmc->replace, 
 		       dmc->rd_invalidates, dmc->wr_invalidates,
 		       dmc->uncached_reads, dmc->uncached_writes,
@@ -1311,14 +1314,14 @@ flashcache_wt_status_table(struct cache_c *dmc, status_type_t type,
 	int i;
 	int sz = 0; /* DMEMIT */
 
-	if (dmc->size > 0)
-		cache_pct = (dmc->cached_blocks * 100) / dmc->size;
+	if (dmc->size > 0)		
+		cache_pct =div64_u64((dmc->cached_blocks * 100),dmc->size);
 	else 
 		cache_pct = 0;
 	DMEMIT("conf:\n"\
 	       "\tssd dev (%s), disk dev (%s) mode (%s)\n"              \
-	       "\tcapacity(%luM), associativity(%u), block size(%uK)\n" \
-	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
+	       "\tcapacity(%lluM), associativity(%u), block size(%uK)\n" \
+	       "\ttotal blocks(%llu), cached blocks(%lu), cache percent(%d)\n",
 	       dmc->cache_devname, dmc->disk_devname,
 	       ((dmc->write_around_mode) ? "WRITE_AROUND" : "WRITETHROUGH"),
 	       dmc->size*dmc->block_size>>11, dmc->assoc,
