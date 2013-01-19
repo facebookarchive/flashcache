@@ -766,15 +766,6 @@ EXPORT_SYMBOL(flashcache_alloc_cache_job);
 EXPORT_SYMBOL(flashcache_free_cache_job);
 EXPORT_SYMBOL(flashcache_alloc_pending_job);
 EXPORT_SYMBOL(flashcache_free_pending_job);
-EXPORT_SYMBOL(pop);
-EXPORT_SYMBOL(push);
-EXPORT_SYMBOL(push_pending);
-EXPORT_SYMBOL(push_io);
-EXPORT_SYMBOL(push_md_io);
-EXPORT_SYMBOL(push_md_complete);
-EXPORT_SYMBOL(process_jobs);
-EXPORT_SYMBOL(do_work);
-EXPORT_SYMBOL(new_kcached_job);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
 #endif
