@@ -11,12 +11,12 @@ Flashcache to later Linux releases. We now have built
 Flashcache on 2.6.18, 2.6.20 and 2.6.27-32. We have tested 
 Flashcache on 2.6.18, 2.6.20, 2.6.27 and 2.6.32.
 
-You'll need the entire kernel source tree in order to build
-flashcache.
+You need either a kernel source tree or a kernel headers tree
+(a linux-headers-* package) in order to build flashcache.
 
 At the top directory, run
 
-make KERNEL_TREE=<root of the kernel source tree>
+  make KERNEL_TREE=<root of the kernel tree>
 
 This builds both the flashcache.ko and 3 utilities.
 
