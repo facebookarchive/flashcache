@@ -2,7 +2,7 @@
 %{!?kernel_version:%define kernel_version %(uname -r)}
 
 # The version of the module,
-%{!?modversion:%define modversion %(if [ -d .git ]; then git describe --abbrev=0 --tags; else 2.0; fi)}
+%{!?modversion:%define modversion %(if [ -d .git ]; then git describe --abbrev=0 --tags; else echo 2.0; fi)}
 
 # Which revision are we on, increment per RPM build
 %{!?pkgrelease:%define pkgrelease 1}
@@ -15,7 +15,7 @@
 %define modname flashcache
 
 # Define git commit revision, if we're in a repo
-%define commit_rev %(if [ -d .git ]; then git describe --always --abbrev=12; else ''; fi)
+%define commit_rev %(if [ -d .git ]; then git describe --always --abbrev=12; else echo ''; fi)
 
 # The path to the module, after it is installed
 %define modpath /lib/modules/%{kernel_version}/extra/flashcache/
