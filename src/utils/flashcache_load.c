@@ -114,10 +114,8 @@ main(int argc, char **argv)
 		}
 	}
 
-	if ((argc < 2) || (argc > 3)) {
-		usage(pname);
-	}
-	
+	if (optind == argc)
+	    usage(pname);
 	ssd_devname = argv[optind++];
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
@@ -143,10 +141,10 @@ main(int argc, char **argv)
 	}
 	
 	// switch to new vdev name if requested by load command
-	if (argc == 3) {
-		cachedev = argv[optind];
+	if (optind == argc) {
+	    cachedev = sb->cache_devname;
 	} else {
-		cachedev = sb->cache_devname;
+	    cachedev = argv[optind];
 	}
 	disk_devname = sb->disk_devname;
 
