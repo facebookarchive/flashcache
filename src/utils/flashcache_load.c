@@ -114,7 +114,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	if ((argc < 2) || (argc > 3)) {
+	if ((argc < 2) || (argc > 4)) {
 		usage(pname);
 	}
 	
@@ -143,10 +143,10 @@ main(int argc, char **argv)
 	}
 	
 	// switch to new vdev name if requested by load command
-	if (argc == 3) {
-		cachedev = argv[optind];
-	} else {
+	if (optind == argc) {
 		cachedev = sb->cache_devname;
+	} else {
+		cachedev = argv[optind];
 	}
 	disk_devname = sb->disk_devname;
 
