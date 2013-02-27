@@ -264,7 +264,7 @@ dev.flashcache.<cachedev>.reclaim_policy:
 dev.flashcache.<cachedev>.io_latency_hist:
 	Compute IO latencies and plot these out on a histogram.
 	The scale is 250 usecs. This is disabled by default since 
-	internally flashcache uses gettimeofday() to compute latency
+	internally flashcache uses ktime_get_ts() to compute latency
 	and this can get expensive depending on the clocksource used.
 	Setting this to 1 enables computation of IO latencies.
 	The IO latency histogram is appended to 'dmsetup status'.

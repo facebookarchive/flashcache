@@ -87,9 +87,9 @@ main(int argc, char *argv[])
 			best_agcount = agcount;
 		}
 		if (verbose)
-			printf("agsize = %ld agcount = %d, t1=%d t2=%d\n", 
+			printf("agsize = %zd agcount = %d, t1=%zd t2=%zd\n",
 			       agsize/1024, agcount, t1/1024, t2/1024);
 	}
-	printf("best agsize = %ld agcount=%d\n", 
+	printf("best agsize = %zd agcount=%zd\n",
 	       vsize / (best_agcount * 1024), best_agcount);
 }

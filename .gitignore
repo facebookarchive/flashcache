@@ -1,0 +1,14 @@
+*.o
+*.d
+.*.o.cmd
+*.ko
+.tmp_versions/
+.*.ko.cmd
+Module.symvers
+*.mod.c
+modules.order
+src/utils/flashcache_create
+src/utils/flashcache_destroy
+src/utils/flashcache_load
+src/utils/flashcache_setioctl
+src/utils/get_agsize

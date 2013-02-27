@@ -405,24 +405,23 @@ new_kcached_job(struct cache_c *dmc, struct bio* bio, int index)
 	job->next = NULL;
 	job->md_block = NULL;
 	if (dmc->sysctl_io_latency_hist)
-		do_gettimeofday(&job->io_start_time);
+		ktime_get_ts(&job->io_start_time);
 	else {
 		job->io_start_time.tv_sec = 0;
-		job->io_start_time.tv_usec = 0;
+		job->io_start_time.tv_nsec = 0;
 	}
 	return job;
 }
 
 static void
-flashcache_record_latency(struct cache_c *dmc, struct timeval *start_tv)
+flashcache_record_latency(struct cache_c *dmc, struct timespec *start_ts)
 {
-	struct timeval latency;
+	struct timespec end_ts;
 	int64_t us;
-	
-	do_gettimeofday(&latency);
-	latency.tv_sec -= start_tv->tv_sec;
-	latency.tv_usec -= start_tv->tv_usec;	
-	us = latency.tv_sec * USEC_PER_SEC + latency.tv_usec;
+
+	ktime_get_ts(&end_ts);
+
+	us = (timespec_to_ns(&end_ts) - timespec_to_ns(start_ts)) / NSEC_PER_USEC;
 	us /= IO_LATENCY_GRAN_USECS;	/* histogram 250us gran, scale 10ms total */
 	if (us < IO_LATENCY_BUCKETS)
 		/* < 10ms latency, track it */
@@ -434,7 +433,7 @@ flashcache_record_latency(struct cache_c *dmc, struct timeval *start_tv)
 
 void
 flashcache_bio_endio(struct bio *bio, int error, 
-		     struct cache_c *dmc, struct timeval *start_time)
+		     struct cache_c *dmc, struct timespec *start_time)
 {
 	if (unlikely(dmc->sysctl_io_latency_hist && 
 		     start_time != NULL && 
@@ -767,15 +766,6 @@ EXPORT_SYMBOL(flashcache_alloc_cache_job);
 EXPORT_SYMBOL(flashcache_free_cache_job);
 EXPORT_SYMBOL(flashcache_alloc_pending_job);
 EXPORT_SYMBOL(flashcache_free_pending_job);
-EXPORT_SYMBOL(pop);
-EXPORT_SYMBOL(push);
-EXPORT_SYMBOL(push_pending);
-EXPORT_SYMBOL(push_io);
-EXPORT_SYMBOL(push_md_io);
-EXPORT_SYMBOL(push_md_complete);
-EXPORT_SYMBOL(process_jobs);
-EXPORT_SYMBOL(do_work);
-EXPORT_SYMBOL(new_kcached_job);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
 #endif

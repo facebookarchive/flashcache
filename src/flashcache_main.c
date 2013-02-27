@@ -187,8 +187,8 @@ flashcache_io_callback(unsigned long error, void *context)
 	VERIFY(bio != NULL);
 	if (unlikely(error)) {
 		error = -EIO;
-		DMERR("flashcache_io_callback: io error %ld block %lu action %d", 
-		      error, job->job_io_regions.disk.sector, job->action);
+		DMERR("flashcache_io_callback: io error %ld block %llu action %d", 
+		      error, (unsigned long long)job->job_io_regions.disk.sector, job->action);
 		if (!dmc->bypass_cache && dmc->cache_mode != FLASHCACHE_WRITE_BACK) {
 			DMERR("flashcache_io_callback: switching %s to BYPASS mode",
 			      dmc->cache_devname);
@@ -378,8 +378,8 @@ flashcache_do_pending_error(struct kcached_job *job)
 	struct pending_job *pjob_list = NULL, *pjob = NULL;
 
 	if (!dmc->bypass_cache) {
-		DMERR("flashcache_do_pending_error: error %d block %lu action %d", 
-		      job->error, job->job_io_regions.disk.sector, job->action);
+		DMERR("flashcache_do_pending_error: error %d block %llu action %d", 
+		      job->error, (unsigned long long)job->job_io_regions.disk.sector, job->action);
 	}
 	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
 	VERIFY(cacheblk->cache_state & VALID);
@@ -416,8 +416,8 @@ flashcache_do_pending_error(struct kcached_job *job)
 		 */
 		if (!dmc->bypass_cache)  /* suppress massive console output */
 			DMERR("flashcache_do_pending_error: Re-launching errored IO"
-			      "to disk, after io error %d block %lu",
-			      error, bio->bi_sector);
+			      "to disk, after io error %d block %llu",
+			      error, (unsigned long long)bio->bi_sector);
 		flashcache_start_uncached_io(dmc, bio);
 		while (pjob_list != NULL) {
 			pjob = pjob_list;
@@ -746,8 +746,8 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	unsigned long flags;
 
 	if (flashcache_alloc_md_sector(job)) {
-		DMERR("flashcache: %d: Cache metadata write failed, cannot alloc page ! block %lu", 
-		      job->action, job->job_io_regions.disk.sector);
+		DMERR("flashcache: %d: Cache metadata write failed, cannot alloc page ! block %llu", 
+		      job->action, (unsigned long long)job->job_io_regions.disk.sector);
 		flashcache_md_write_callback(-EIO, job);
 		return;
 	}
@@ -849,8 +849,8 @@ flashcache_md_write_done(struct kcached_job *job)
 			flashcache_bio_endio(job->bio, job->error, dmc, &job->io_start_time);
 			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
-					DMERR("flashcache: WRITE: Cache metadata write failed ! error %d block %lu", 
-					      job->error, cacheblk->dbn);
+					DMERR("flashcache: WRITE: Cache metadata write failed ! error %d block %llu", 
+					      job->error, (unsigned long long)cacheblk->dbn);
 				}
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_do_pending(job);
@@ -888,8 +888,8 @@ flashcache_md_write_done(struct kcached_job *job)
 			dmc->clean_inprog--;
 			if (job->error || cacheblk->nr_queued > 0) {
 				if (job->error) {
-					DMERR("flashcache: CLEAN: Cache metadata write failed ! error %d block %lu", 
-					      job->error, cacheblk->dbn);
+					DMERR("flashcache: CLEAN: Cache metadata write failed ! error %d block %llu", 
+					      job->error, (unsigned long long)cacheblk->dbn);
 				}
 				spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 				flashcache_do_pending(job);
@@ -1002,8 +1002,8 @@ flashcache_kcopyd_callback(int read_err, unsigned int write_err, void *context)
 		if (write_err)
 			write_err = -EIO;
 		/* Disk write failed. We can not purge this block from flash */
-		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %lu", 
-		      -read_err, -write_err, job->job_io_regions.disk.sector);
+		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %llu", 
+		      -read_err, -write_err, (unsigned long long)job->job_io_regions.disk.sector);
 		VERIFY(dmc->cache_sets[index / dmc->assoc].clean_inprog > 0);
 		VERIFY(dmc->clean_inprog > 0);
 		dmc->cache_sets[index / dmc->assoc].clean_inprog--;
@@ -1049,8 +1049,8 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 	 * If the device is being removed, do not kick off any more cleanings.
 	 */
 	if (unlikely(atomic_read(&dmc->remove_in_prog))) {
-		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %lu", 
-		      cacheblk->dbn);
+		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %llu", 
+		      (unsigned long long)cacheblk->dbn);
 		if (job)
 			flashcache_free_cache_job(job);
 		job = NULL;
@@ -1064,8 +1064,8 @@ flashcache_dirty_writeback(struct cache_c *dmc, int index)
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (device_removal == 0)
-			DMERR("flashcache: Dirty Writeback (for set cleaning) failed ! Can't allocate memory, block %lu", 
-			      cacheblk->dbn);
+			DMERR("flashcache: Dirty Writeback (for set cleaning) failed ! Can't allocate memory, block %llu", 
+			      (unsigned long long)cacheblk->dbn);
 	} else {
 		job->bio = NULL;
 		job->action = WRITEDISK;
@@ -1289,8 +1289,8 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 			 * Since we dropped the spinlock, we have to drain any 
 			 * pending jobs.
 			 */
-			DMERR("flashcache: Read (hit) failed ! Can't allocate memory for cache IO, block %lu", 
-			      cacheblk->dbn);
+			DMERR("flashcache: Read (hit) failed ! Can't allocate memory for cache IO, block %llu", 
+			      (unsigned long long)cacheblk->dbn);
 			flashcache_bio_endio(bio, -EIO, dmc, NULL);
 			spin_lock_irq(&dmc->cache_spin_lock);
 			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
@@ -1341,8 +1341,8 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		 * Since we dropped the spinlock, we have to drain any 
 		 * pending jobs.
 		 */
-		DMERR("flashcache: Read (miss) failed ! Can't allocate memory for cache IO, block %lu", 
-		      cacheblk->dbn);
+		DMERR("flashcache: Read (miss) failed ! Can't allocate memory for cache IO, block %llu", 
+		      (unsigned long long)cacheblk->dbn);
 		flashcache_bio_endio(bio, -EIO, dmc, NULL);
 		spin_lock_irq(&dmc->cache_spin_lock);
 		dmc->cached_blocks--;
@@ -1585,8 +1585,8 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 		 * Since we dropped the spinlock, we have to drain any 
 		 * pending jobs.
 		 */
-		DMERR("flashcache: Write (miss) failed ! Can't allocate memory for cache IO, block %lu", 
-		      cacheblk->dbn);
+		DMERR("flashcache: Write (miss) failed ! Can't allocate memory for cache IO, block %llu", 
+		      (unsigned long long)cacheblk->dbn);
 		flashcache_bio_endio(bio, -EIO, dmc, NULL);
 		spin_lock_irq(&dmc->cache_spin_lock);
 		dmc->cached_blocks--;
@@ -1648,8 +1648,8 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			 * Since we dropped the spinlock, we have to drain any 
 			 * pending jobs.
 			 */
-			DMERR("flashcache: Write (hit) failed ! Can't allocate memory for cache IO, block %lu", 
-			      cacheblk->dbn);
+			DMERR("flashcache: Write (hit) failed ! Can't allocate memory for cache IO, block %llu", 
+			      (unsigned long long)cacheblk->dbn);
 			flashcache_bio_endio(bio, -EIO, dmc, NULL);
 			spin_lock_irq(&dmc->cache_spin_lock);
 			flashcache_free_pending_jobs(dmc, cacheblk, -EIO);
@@ -1824,8 +1824,8 @@ flashcache_kcopyd_callback_sync(int read_err, unsigned int write_err, void *cont
 		if (write_err)
 			write_err = -EIO;
 		/* Disk write failed. We can not purge this cache from flash */
-		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %lu", 
-		      -read_err, -write_err, job->job_io_regions.disk.sector);
+		DMERR("flashcache: Disk writeback failed ! read error %d write error %d block %llu", 
+		      -read_err, -write_err, (unsigned long long)job->job_io_regions.disk.sector);
 		VERIFY(dmc->cache_sets[index / dmc->assoc].clean_inprog > 0);
 		VERIFY(dmc->clean_inprog > 0);
 		dmc->cache_sets[index / dmc->assoc].clean_inprog--;
@@ -1866,8 +1866,8 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 	 * If the device is being (fast) removed, do not kick off any more cleanings.
 	 */
 	if (unlikely(atomic_read(&dmc->remove_in_prog) == FAST_REMOVE)) {
-		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %lu", 
-		      cacheblk->dbn);
+		DMERR("flashcache: Dirty Writeback (for set cleaning) aborted for device removal, block %llu", 
+		      (unsigned long long)cacheblk->dbn);
 		if (job)
 			flashcache_free_cache_job(job);
 		job = NULL;
@@ -1881,8 +1881,8 @@ flashcache_dirty_writeback_sync(struct cache_c *dmc, int index)
 		cacheblk->cache_state &= ~(BLOCK_IO_INPROG);
 		spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
 		if (device_removal == 0)
-			DMERR("flashcache: Dirty Writeback (for sync) failed ! Can't allocate memory, block %lu", 
-			      cacheblk->dbn);
+			DMERR("flashcache: Dirty Writeback (for sync) failed ! Can't allocate memory, block %llu", 
+			      (unsigned long long)cacheblk->dbn);
 	} else {
 		job->bio = NULL;
 		job->action = WRITEDISK_SYNC;
@@ -2024,8 +2024,8 @@ flashcache_uncached_io_complete(struct kcached_job *job)
 	int error = job->error;
 
 	if (unlikely(error)) {
-		DMERR("flashcache uncached disk IO error: io error %d block %lu R/w %s", 
-		      error, job->job_io_regions.disk.sector, 
+		DMERR("flashcache uncached disk IO error: io error %d block %llu R/w %s", 
+		      error, (unsigned long long)job->job_io_regions.disk.sector, 
 		      (bio_data_dir(job->bio) == WRITE) ? "WRITE" : "READ");
 		if (bio_data_dir(job->bio) == WRITE)
 			dmc->flashcache_errors.disk_write_errors++;

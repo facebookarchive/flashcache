@@ -239,8 +239,8 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 				error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
 				if (error) {
 					write_errors++;
-					DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %lu error %d !",
-					      where.sector, error);
+					DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %llu error %d !",
+					      (unsigned long long)where.sector, error);
 				}
 				where.sector += where.count;	/* Advance offset */
 			}
@@ -260,8 +260,8 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 		error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, meta_data_cacheblock);
 		if (error) {
 			write_errors++;
-				DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %lu error %d !",
-				      where.sector, error);
+				DMERR("flashcache_writeback_md_store: Could not write out cache metadata block %llu error %d !",
+				      (unsigned long long)where.sector, error);
 		}
 	}
 	/* Debug Tests */
@@ -312,8 +312,8 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 	error = flashcache_dm_io_sync_vm(dmc, &where, WRITE, header);
 	if (error) {
 		write_errors++;
-		DMERR("flashcache_writeback_md_store: Could not write out cache metadata superblock %lu error %d !",
-		      where.sector, error);
+		DMERR("flashcache_writeback_md_store: Could not write out cache metadata superblock %llu error %d !",
+		      (unsigned long long)where.sector, error);
 	}
 
 	vfree((void *)header);
@@ -352,17 +352,19 @@ flashcache_writethrough_create(struct cache_c *dmc)
 	cache_size = dmc->size * dmc->block_size;
 	if (cache_size > dev_size) {
 		DMERR("Requested cache size exeeds the cache device's capacity" \
-		      "(%lu>%lu)",
-  		      cache_size, dev_size);
+		      "(%llu>%llu)",
+  		      (unsigned long long)cache_size, (unsigned long long)dev_size);
 		return 1;
 	}
 	order = dmc->size * sizeof(struct cacheblock);
-	DMINFO("Allocate %luKB (%luB per) mem for %lu-entry cache" \
-	       "(capacity:%luMB, associativity:%u, block size:%u " \
-	       "sectors(%uKB))",
-	       order >> 10, sizeof(struct cacheblock), dmc->size,
-	       cache_size >> (20-SECTOR_SHIFT), dmc->assoc, dmc->block_size,
-	       dmc->block_size >> (10-SECTOR_SHIFT));
+	DMINFO("Allocate %lluKB (%zuB per) mem for %llu-entry cache" \
+	       "(capacity:%lluMB, associativity:%llu, block size:%llu " \
+	       "sectors(%lluKB))",
+	       (unsigned long long)order >> 10, sizeof(struct cacheblock),
+	       (unsigned long long)dmc->size,
+	       (unsigned long long)cache_size >> (20-SECTOR_SHIFT), (unsigned long long)dmc->assoc,
+	       (unsigned long long)dmc->block_size,
+	       (unsigned long long)dmc->block_size >> (10-SECTOR_SHIFT));
 	dmc->cache = (struct cacheblock *)vmalloc(order);
 	if (!dmc->cache) {
 		DMERR("flashcache_writethrough_create: Unable to allocate cache md");
@@ -408,8 +410,8 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
 	if (error) {
 		vfree((void *)header);
-		DMERR("flashcache_writeback_create: Could not read cache superblock %lu error %d !",
-		      where.sector, error);
+		DMERR("flashcache_writeback_create: Could not read cache superblock %llu error %d !",
+		      (unsigned long long)where.sector, error);
 		return 1;
 	}
 	if (!force &&
@@ -434,18 +436,20 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	cache_size = dmc->md_blocks * MD_SECTORS_PER_BLOCK(dmc) + (dmc->size * dmc->block_size);
 	if (cache_size > dev_size) {
 		DMERR("Requested cache size exceeds the cache device's capacity" \
-		      "(%lu>%lu)",
-  		      cache_size, dev_size);
+		      "(%llu>%llu)",
+  		      (unsigned long long)cache_size, (unsigned long long)dev_size);
 		vfree((void *)header);
 		return 1;
 	}
 	order = dmc->size * sizeof(struct cacheblock);
-	DMINFO("Allocate %luKB (%luB per) mem for %lu-entry cache" \
-	       "(capacity:%luMB, associativity:%u, block size:%u " \
-	       "sectors(%uKB))",
-	       order >> 10, sizeof(struct cacheblock), dmc->size,
-	       cache_size >> (20-SECTOR_SHIFT), dmc->assoc, dmc->block_size,
-	       dmc->block_size >> (10-SECTOR_SHIFT));
+	DMINFO("Allocate %lluKB (%zuB per) mem for %llu-entry cache" \
+	       "(capacity:%lluMB, associativity:%llu, block size:%llu " \
+	       "sectors(%lluKB))",
+	       (unsigned long long)order >> 10, sizeof(struct cacheblock),
+	       (unsigned long long)dmc->size,
+	       (unsigned long long)cache_size >> (20-SECTOR_SHIFT),
+	       (unsigned long long)dmc->assoc, (unsigned long long)dmc->block_size,
+	       (unsigned long long)dmc->block_size >> (10-SECTOR_SHIFT));
 	dmc->cache = (struct cacheblock *)vmalloc(order);
 	if (!dmc->cache) {
 		vfree((void *)header);
@@ -498,8 +502,8 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 					vfree((void *)header);
 					vfree((void *)meta_data_cacheblock);
 					vfree(dmc->cache);
-					DMERR("flashcache_writeback_create: Could not write cache metadata block %lu error %d !",
-					      where.sector, error);
+					DMERR("flashcache_writeback_create: Could not write cache metadata block %llu error %d !",
+					      (unsigned long long)where.sector, error);
 					return 1;
 				}
 				where.sector += where.count;	/* Advance offset */
@@ -522,8 +526,8 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 			vfree((void *)header);
 			vfree((void *)meta_data_cacheblock);
 			vfree(dmc->cache);
-			DMERR("flashcache_writeback_create: Could not write cache metadata block %lu error %d !",
-			      where.sector, error);
+			DMERR("flashcache_writeback_create: Could not write cache metadata block %llu error %d !",
+			      (unsigned long long)where.sector, error);
 			return 1;		
 		}
 	}
@@ -558,8 +562,8 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
-		DMERR("flashcache_writeback_create: Could not write cache superblock %lu error %d !",
-		      where.sector, error);
+		DMERR("flashcache_writeback_create: Could not write cache superblock %llu error %d !",
+		      (unsigned long long)where.sector, error);
 		return 1;		
 	}
 	vfree((void *)header);
@@ -600,8 +604,8 @@ flashcache_writeback_load(struct cache_c *dmc)
 	error = flashcache_dm_io_sync_vm(dmc, &where, READ, header);
 	if (error) {
 		vfree((void *)header);
-		DMERR("flashcache_writeback_load: Could not read cache superblock %lu error %d!",
-		      where.sector, error);
+		DMERR("flashcache_writeback_load: Could not read cache superblock %llu error %d!",
+		      (unsigned long long)where.sector, error);
 		return 1;
 	}
 
@@ -647,17 +651,17 @@ flashcache_writeback_load(struct cache_c *dmc)
 	dmc->assoc = header->assoc;
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 	dmc->md_blocks = INDEX_TO_MD_BLOCK(dmc, dmc->size) + 1 + 1;
-	DMINFO("flashcache_writeback_load: md_blocks = %d, md_sectors = %d, md_block_size = %d\n", 
-	       dmc->md_blocks, dmc->md_blocks * MD_SECTORS_PER_BLOCK(dmc), dmc->md_block_size);
+	DMINFO("flashcache_writeback_load: md_blocks = %lld, md_sectors = %d, md_block_size = %d\n", 
+	       (unsigned long long)dmc->md_blocks, dmc->md_blocks * MD_SECTORS_PER_BLOCK(dmc), dmc->md_block_size);
 	data_size = dmc->size * dmc->block_size;
 	order = dmc->size * sizeof(struct cacheblock);
-	DMINFO("Allocate %luKB (%ldB per) mem for %lu-entry cache" \
-	       "(capacity:%luMB, associativity:%u, block size:%u " \
-	       "sectors(%uKB))",
-	       order >> 10, sizeof(struct cacheblock), dmc->size,
-	       (dmc->md_blocks * MD_SECTORS_PER_BLOCK(dmc) + data_size) >> (20-SECTOR_SHIFT), 
-	       dmc->assoc, dmc->block_size,
-	       dmc->block_size >> (10-SECTOR_SHIFT));
+	DMINFO("Allocate %lluKB (%zdB per) mem for %llu-entry cache" \
+	       "(capacity:%lluMB, associativity:%llu, block size:%llu " \
+	       "sectors(%lluKB))",
+	       (unsigned long long)order >> 10, sizeof(struct cacheblock), (unsigned long long)dmc->size,
+	       (unsigned long long)(dmc->md_blocks * MD_SECTORS_PER_BLOCK(dmc) + data_size) >> (20-SECTOR_SHIFT), 
+	       (unsigned long long)dmc->assoc, (unsigned long long)dmc->block_size,
+	       (unsigned long long)dmc->block_size >> (10-SECTOR_SHIFT));
 	dmc->cache = (struct cacheblock *)vmalloc(order);
 	if (!dmc->cache) {
 		DMERR("load_metadata: Unable to allocate memory");
@@ -687,8 +691,8 @@ flashcache_writeback_load(struct cache_c *dmc)
 			vfree((void *)header);
 			vfree(dmc->cache);
 			vfree((void *)meta_data_cacheblock);
-			DMERR("flashcache_writeback_load: Could not read cache metadata block %lu error %d !",
-			      where.sector, error);
+			DMERR("flashcache_writeback_load: Could not read cache metadata block %llu error %d !",
+			      (unsigned long long)where.sector, error);
 			return 1;
 		}
 		where.sector += where.count;
@@ -784,8 +788,8 @@ flashcache_writeback_load(struct cache_c *dmc)
 	if (error) {
 		vfree((void *)header);
 		vfree(dmc->cache);
-		DMERR("flashcache_writeback_load: Could not write cache superblock %lu error %d !",
-		      where.sector, error);
+		DMERR("flashcache_writeback_load: Could not write cache superblock %llu error %d !",
+		      (unsigned long long)where.sector, error);
 		return 1;		
 	}
 	vfree((void *)header);
@@ -959,11 +963,13 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	/* dmc->size is specified in sectors here, and converted to blocks later */
 	if (argc >= 7) {
-		if (sscanf(argv[6], "%lu", &dmc->size) != 1) {
+		unsigned long long dmc_size = 0;
+		if (sscanf(argv[6], "%llu", &dmc_size) != 1) {
 			ti->error = "flashcache: Invalid cache size";
 			r = -EINVAL;
 			goto bad3;
 		}
+		dmc->size = dmc_size;
 	}
 	
 	if (!dmc->size)
@@ -1277,17 +1283,17 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 		cache_mode = "WRITE_AROUND";
 	DMINFO("conf:\n"						\
 	       "\tvirt dev (%s), ssd dev (%s), disk dev (%s) cache mode(%s)\n"		\
-	       "\tcapacity(%luM), associativity(%u), data block size(%uK) metadata block size(%ub)\n" \
+	       "\tcapacity(%lluM), associativity(%u), data block size(%uK) metadata block size(%ub)\n" \
 	       "\tskip sequential thresh(%uK)\n" \
-	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n" \
+	       "\ttotal blocks(%llu), cached blocks(%llu), cache percent(%d)\n" \
 	       "\tdirty blocks(%d), dirty percent(%d)\n",
 	       dmc->dm_vdevname, dmc->cache_devname, dmc->disk_devname,
 	       cache_mode,
-	       dmc->size*dmc->block_size>>11, dmc->assoc,
+	       (unsigned long long)dmc->size*dmc->block_size>>11, dmc->assoc,
 	       dmc->block_size>>(10-SECTOR_SHIFT), 
 	       dmc->md_block_size * 512, 
 	       dmc->sysctl_skip_seq_thresh_kb,
-	       dmc->size, dmc->cached_blocks, 
+	       (unsigned long long)dmc->size, (unsigned long long)dmc->cached_blocks, 
 	       (int)cache_pct, dmc->nr_dirty, (int)dirty_pct);
 	DMINFO("\tnr_queued(%lu)\n", dmc->pending_jobs_count);
 	DMINFO("Size Hist: ");
@@ -1483,19 +1489,19 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	       dmc->cache_devname, dmc->disk_devname,
 	       cache_mode);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		DMEMIT("\tcapacity(%luM), associativity(%u), data block size(%uK) metadata block size(%ub)\n",
-		       dmc->size*dmc->block_size>>11, dmc->assoc,
+		DMEMIT("\tcapacity(%lluM), associativity(%u), data block size(%uK) metadata block size(%ub)\n",
+		       (unsigned long long)dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT), 
 		       dmc->md_block_size * 512);
 	} else {
-		DMEMIT("\tcapacity(%luM), associativity(%u), data block size(%uK)\n",
-		       dmc->size*dmc->block_size>>11, dmc->assoc,
+		DMEMIT("\tcapacity(%lluM), associativity(%u), data block size(%uK)\n",
+		       (unsigned long long)dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT));
 	}
 	DMEMIT("\tskip sequential thresh(%uK)\n",
 	       dmc->sysctl_skip_seq_thresh_kb);
-	DMEMIT("\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
-	       dmc->size, dmc->cached_blocks,
+	DMEMIT("\ttotal blocks(%llu), cached blocks(%lu), cache percent(%d)\n",
+	       (unsigned long long)dmc->size, dmc->cached_blocks,
 	       (int)cache_pct);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		DMEMIT("\tdirty blocks(%d), dirty percent(%d)\n",

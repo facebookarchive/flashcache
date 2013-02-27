@@ -328,7 +328,7 @@ struct kcached_job {
 	int 	error;
 	struct flash_cacheblock *md_block;
 	struct bio_vec md_io_bvec;
-	struct timeval io_start_time;
+	struct timespec io_start_time;
 	struct kcached_job *next;
 };
 
@@ -597,7 +597,7 @@ void flashcache_detect_fallow(struct cache_c *dmc, int index);
 void flashcache_clear_fallow(struct cache_c *dmc, int index);
 
 void flashcache_bio_endio(struct bio *bio, int error, 
-			  struct cache_c *dmc, struct timeval *io_start_time);
+			  struct cache_c *dmc, struct timespec *io_start_time);
 
 /* procfs */
 void flashcache_module_procfs_init(void);

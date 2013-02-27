@@ -164,13 +164,13 @@ main(int argc, char **argv)
 		exit(1);				
 	}
 	if (cache_devsize != sb->cache_devsize) {
-		fprintf(stderr, "%s: Cache size mismatch, expect %lu, given %lu\n", 
-			pname, sb->cache_devsize, cache_devsize);
+		fprintf(stderr, "%s: Cache size mismatch, expect %llu, given %llu\n", 
+			pname, (unsigned long long)sb->cache_devsize, (unsigned long long)cache_devsize);
 		exit(1);		
 	}
 	if (disk_devsize != sb->disk_devsize) {
-		fprintf(stderr, "%s: Disk size mismatch, expect %lu, given %lu\n", 
-			pname, sb->disk_devsize, disk_devsize);
+		fprintf(stderr, "%s: Disk size mismatch, expect %llu, given %llu\n", 
+			pname, (unsigned long long)sb->disk_devsize, (unsigned long long)disk_devsize);
 		exit(1);		
 	}
 	/* 
@@ -179,8 +179,8 @@ main(int argc, char **argv)
 	 * XXX - Should use the device mapper library for this.
 	 */
 	cache_mode = FLASHCACHE_WRITE_BACK;
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 1 | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, cachedev);
+	sprintf(dmsetup_cmd, "echo 0 %llu flashcache %s %s %s %d 1 | dmsetup create %s",
+		(unsigned long long)disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, cachedev);
 	load_module();
 	if (verbose)
 		fprintf(stderr, "Loading FlashCache Volume : %s\n", dmsetup_cmd);

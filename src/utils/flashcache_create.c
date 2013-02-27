@@ -261,11 +261,14 @@ main(int argc, char **argv)
 	printf("cachedev %s, ssd_devname %s, disk_devname %s cache mode %s\n", 
 	       cachedev, ssd_devname, disk_devname, cache_mode_str);
 	if (cache_mode == FLASHCACHE_WRITE_BACK)
-		printf("block_size %lu, md_block_size %lu, cache_size %lu\n", 
-		       block_size, md_block_size, cache_size);
+		printf("block_size %llu, md_block_size %llu, cache_size %llu\n", 
+		       (unsigned long long)block_size,
+		       (unsigned long long)md_block_size,
+		       (unsigned long long)cache_size);
 	else
-		printf("block_size %lu, cache_size %lu\n", 
-		       block_size, cache_size);
+		printf("block_size %llu, cache_size %llu\n", 
+		       (unsigned long long)block_size,
+		       (unsigned long long)cache_size);
 	cache_fd = open(ssd_devname, O_RDONLY);
 	if (cache_fd < 0) {
 		fprintf(stderr, "Failed to open %s\n", ssd_devname);
@@ -310,13 +313,13 @@ main(int argc, char **argv)
 	}
 	if (md_block_size > 0 &&
 	    md_block_size * 512 < cache_sectorsize) {
-		fprintf(stderr, "%s: SSD device (%s) sector size (%d) cannot be larger than metadata block size (%d) !\n",
-		        pname, ssd_devname, cache_sectorsize, md_block_size * 512);
+		fprintf(stderr, "%s: SSD device (%s) sector size (%d) cannot be larger than metadata block size (%lld) !\n",
+		        pname, ssd_devname, cache_sectorsize, (unsigned long long)md_block_size * 512);
 		exit(1);				
 	}
 	if (cache_size && cache_size > cache_devsize) {
-		fprintf(stderr, "%s: Cache size is larger than ssd size %lu/%lu\n", 
-			pname, cache_size, cache_devsize);
+		fprintf(stderr, "%s: Cache size is larger than ssd size %llu/%llu\n", 
+			pname, (unsigned long long)cache_size, (unsigned long long)cache_devsize);
 		exit(1);		
 	}
 
@@ -329,8 +332,8 @@ main(int argc, char **argv)
 		ram_needed = (cache_size    / block_size) * sizeof(struct cacheblock);
 
 	sysinfo(&i);
-	printf("Flashcache metadata will use %luMB of your %luMB main memory\n",
-		ram_needed >> 20, i.totalram >> 20);
+	printf("Flashcache metadata will use %lluMB of your %lluMB main memory\n",
+		(unsigned long long)ram_needed >> 20, (unsigned long long)i.totalram >> 20);
 	if (!force && ram_needed > (i.totalram * 25 / 100)) {
 		fprintf(stderr, "Proportion of main memory needed for flashcache metadata is high.\n");
 		fprintf(stderr, "You can reduce this with a smaller cache or a larger blocksize.\n");
@@ -342,10 +345,11 @@ main(int argc, char **argv)
 			ssd_devname, disk_devname);
 		check_sure();
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %llu flashcache %s %s %s %d 2 %llu %llu %llu %llu"
 		" | dmsetup create %s",
-		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
-		cache_size, associativity, md_block_size,
+		(unsigned long long)disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode,
+		(unsigned long long)block_size,
+		(unsigned long long)cache_size, (unsigned long long)associativity, (unsigned long long)md_block_size,
 		cachedev);
 
 	/* Go ahead and create the cache.
