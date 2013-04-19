@@ -42,7 +42,7 @@ utils:
 modules_install: modules
 	install -o root -g root -m 0755 -d $(DESTDIR)/lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/
 	install -o root -g root -m 0755 flashcache.ko $(DESTDIR)/lib/modules/$(KERNEL_SOURCE_VERSION)/extra/flashcache/
-	depmod -a
+	depmod -a $(KERNEL_SOURCE_VERSION)
 
 .PHONY: utils_install
 utils_install: utils
