@@ -32,7 +32,7 @@ cached (tunable).
     
 Cache Persistence :
 =================
-Writethru and Writearound caches are not persistent across a device removal
+Writethrough and Writearound caches are not persistent across a device removal
 or a reboot. Only Writeback caches are persistent across device removals
 and reboots.  This reinforces 'writeback is fastest', 'writethrough is safest'.
 
