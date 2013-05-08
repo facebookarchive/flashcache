@@ -91,7 +91,7 @@ an older flashcache device format that didn't store the cachedev name
 internally, or you want to change the cachedev name use, you can specify
 it as an optional second argument to flashcache_load.
 
-For writethrough and writebehind caches flashcache_load is not needed; flashcache_create 
+For writethrough and writearound caches flashcache_load is not needed; flashcache_create 
 should be used each time.
 
 
@@ -103,7 +103,7 @@ Example :
 flashcache_destroy /dev/sdc
 Destroy the existing cache on /dev/sdc. All data is lost !!!
 
-For writethrough and writebehind caches this is not necessary.
+For writethrough and writearound caches this is not necessary.
 
 
 Removing a flashcache volume :
