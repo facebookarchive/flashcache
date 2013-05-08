@@ -448,7 +448,7 @@ Why is my cache only (<< 100%) utilized ?
 - In more detail, a HDD block gets hashed to a set on SSD which contains by 
   default 512 blocks.  It can only be stored in that set on SSD, nowhere else.
 
-So with a simplified SSD containly only 3 sets:
+So with a simplified SSD containing only 3 sets:
 
 SSD = 1 2 3 , and a HDD with 9 sets worth of data, the HDD sets would map to the SSD 
 sets like this:
