@@ -1514,12 +1514,18 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
  *  Output cache stats upon request of device status;
  *  Output cache configuration upon request of table status.
  */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)
+void
+flashcache_status(struct dm_target *ti, status_type_t type,
+		  unsigned int unused_status_flags,
+		  char *result, unsigned int maxlen)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
 int
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
 flashcache_status(struct dm_target *ti, status_type_t type,
 		  unsigned int unused_status_flags,
 		  char *result, unsigned int maxlen)
 #else
+int
 flashcache_status(struct dm_target *ti, status_type_t type,
 		  char *result, unsigned int maxlen)
 #endif
@@ -1534,12 +1540,14 @@ flashcache_status(struct dm_target *ti, status_type_t type,
 		flashcache_status_table(dmc, type, result, maxlen);
 		break;
 	}
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0)
 	return 0;
+#endif
 }
 
 static struct target_type flashcache_target = {
 	.name   = "flashcache",
-	.version= {1, 0, 3},
+	.version= {1, 0, 4},
 	.module = THIS_MODULE,
 	.ctr    = flashcache_ctr,
 	.dtr    = flashcache_dtr,
