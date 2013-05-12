@@ -75,10 +75,6 @@ module_loaded(void)
 static void
 load_module(void)
 {
-	FILE *fp;
-	char line[8192];
-	int found = 0;
-
 	if (module_loaded()) {
 		if (verbose)
 			fprintf(stderr, "Flashcache Module already loaded\n");		
@@ -93,6 +89,7 @@ load_module(void)
 	}
 }
 
+int
 main(int argc, char **argv)
 {
 	int c, cache_fd, disk_fd;
@@ -189,4 +186,5 @@ main(int argc, char **argv)
 		fprintf(stderr, "%s failed\n", dmsetup_cmd);
 		exit(1);
 	}
+	return 0;
 }
