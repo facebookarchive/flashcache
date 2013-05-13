@@ -54,13 +54,12 @@ char *pname;
 char *sb_buf;
 char *buf;
 
+int
 main(int argc, char **argv)
 {
-	int cache_fd, disk_fd, c;
-	char *disk_devname, *ssd_devname, *cachedev;
+	int cache_fd, c;
+	char *ssd_devname;
 	struct flash_superblock *sb;
-	sector_t cache_devsize, disk_devsize;
-	sector_t block_size = 0;
 	u_int64_t md_block_bytes = 0;
 	u_int64_t md_slots_per_block = 0;
 	u_int64_t cache_size = 0;
@@ -158,4 +157,5 @@ main(int argc, char **argv)
 		fprintf(stderr, "Cannot write Flashcache superblock %s\n", ssd_devname);
 		exit(1);		
 	}
+	return 0;
 }
