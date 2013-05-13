@@ -1753,9 +1753,13 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 /*
  * Decide the mapping and perform necessary cache operations for a bio request.
  */
-int 
+int
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
 flashcache_map(struct dm_target *ti, struct bio *bio,
 	       union map_info *map_context)
+#else
+flashcache_map(struct dm_target *ti, struct bio *bio)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
 	int sectors = to_sector(bio->bi_size);

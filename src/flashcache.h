@@ -523,8 +523,12 @@ struct dbn_index_pair {
 /* Inject a 5s delay between syncing blocks and metadata */
 #define FLASHCACHE_SYNC_REMOVE_DELAY		5000
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
 int flashcache_map(struct dm_target *ti, struct bio *bio,
 		   union map_info *map_context);
+#else
+int flashcache_map(struct dm_target *ti, struct bio *bio);
+#endif
 int flashcache_ctr(struct dm_target *ti, unsigned int argc,
 		   char **argv);
 void flashcache_dtr(struct dm_target *ti);
