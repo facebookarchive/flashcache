@@ -43,7 +43,7 @@ int
 main(int argc, char *argv[])
 {
 	size_t csize, vsize, agsize, t1, t2, diff, best_agcount = 1;
-	int i, agcount;
+	int agcount;
 	int c, verbose = 0;
 	char *pname;
 
@@ -92,4 +92,5 @@ main(int argc, char *argv[])
 	}
 	printf("best agsize = %ld agcount=%d\n", 
 	       vsize / (best_agcount * 1024), best_agcount);
+	return 0;
 }

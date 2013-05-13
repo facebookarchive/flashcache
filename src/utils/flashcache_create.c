@@ -25,6 +25,7 @@
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#include <ctype.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>
@@ -189,6 +190,7 @@ check_sure(void)
 	}
 }
 
+int
 main(int argc, char **argv)
 {
 	int cache_fd, disk_fd, c;
@@ -361,4 +363,5 @@ main(int argc, char **argv)
 		fprintf(stderr, "%s failed\n", dmsetup_cmd);
 		exit(1);
 	}
+	return 0;
 }

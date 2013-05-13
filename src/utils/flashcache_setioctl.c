@@ -42,6 +42,7 @@ void usage(char *pname)
 	exit(1);
 }
 
+int
 main(int argc, char **argv)
 {
 	int cache_fd, c, result;
@@ -130,5 +131,6 @@ main(int argc, char **argv)
 		fprintf(stderr, "ioctl failed on %s\n", cachedev);
 		exit(1);
 	}
+	return 0;
 }
 
