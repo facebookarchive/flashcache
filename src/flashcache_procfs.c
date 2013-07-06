@@ -820,7 +820,12 @@ flashcache_stats_show(struct seq_file *seq, void *v)
 static int 
 flashcache_stats_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, &flashcache_stats_show, PDE(inode)->data);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_stats_show, PDE(inode)->data);	
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_stats_show, PDE_DATA(inode));
+	#endif
 }
 
 static struct file_operations flashcache_stats_operations = {
@@ -849,7 +854,12 @@ flashcache_errors_show(struct seq_file *seq, void *v)
 static int 
 flashcache_errors_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, &flashcache_errors_show, PDE(inode)->data);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_errors_show, PDE(inode)->data);	
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_errors_show, PDE_DATA(inode));
+	#endif
 }
 
 static struct file_operations flashcache_errors_operations = {
@@ -874,7 +884,12 @@ flashcache_iosize_hist_show(struct seq_file *seq, void *v)
 static int 
 flashcache_iosize_hist_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, &flashcache_iosize_hist_show, PDE(inode)->data);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_iosize_hist_show, PDE(inode)->data);
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_iosize_hist_show, PDE_DATA(inode));
+	#endif
 }
 
 static struct file_operations flashcache_iosize_hist_operations = {
@@ -913,7 +928,12 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 static int 
 flashcache_pidlists_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, &flashcache_pidlists_show, PDE(inode)->data);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_pidlists_show, PDE(inode)->data);	
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_pidlists_show, PDE_DATA(inode));
+	#endif
 }
 
 static struct file_operations flashcache_pidlists_operations = {
@@ -938,7 +958,12 @@ flashcache_version_show(struct seq_file *seq, void *v)
 static int 
 flashcache_version_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, &flashcache_version_show, PDE(inode)->data);
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_version_show, PDE(inode)->data);	
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		return single_open(file, &flashcache_version_show, PDE_DATA(inode));
+	#endif
 }
 
 static struct file_operations flashcache_version_operations = {
@@ -955,9 +980,15 @@ flashcache_module_procfs_init(void)
 	struct proc_dir_entry *entry;
 
 	if (proc_mkdir("flashcache", NULL)) {
-		entry = create_proc_entry("flashcache/flashcache_version", 0, NULL);
-		if (entry)
-			entry->proc_fops =  &flashcache_version_operations;
+		#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+			entry = create_proc_entry("flashcache/flashcache_version", 0, NULL);
+			if (entry)
+				entry->proc_fops =  &flashcache_version_operations;
+		#endif
+		#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+			entry = proc_create("flashcache/flashcache_version", 0, NULL, &flashcache_version_operations);
+		#endif	
+
 	}
 #endif /* CONFIG_PROC_FS */
 }
@@ -1029,35 +1060,55 @@ flashcache_ctr_procfs(struct cache_c *dmc)
 		return;
 
 	s = flashcache_cons_procfs_cachename(dmc, "flashcache_stats");
-	entry = create_proc_entry(s, 0, NULL);
-	if (entry) {
-		entry->proc_fops =  &flashcache_stats_operations;
-		entry->data = dmc;
-	}
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		entry = create_proc_entry(s, 0, NULL);
+		if (entry) {
+			entry->proc_fops =  &flashcache_stats_operations;
+			entry->data = dmc;
+		}
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		entry = proc_create_data(s, 0, NULL, &flashcache_stats_operations, dmc);
+	#endif
 	kfree(s);
 
 	s = flashcache_cons_procfs_cachename(dmc, "flashcache_errors");
-	entry = create_proc_entry(s, 0, NULL);
-	if (entry) {
-		entry->proc_fops =  &flashcache_errors_operations;
-		entry->data = dmc;
-	}
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		entry = create_proc_entry(s, 0, NULL);
+		if (entry) {
+			entry->proc_fops =  &flashcache_errors_operations;
+			entry->data = dmc;
+		}
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		entry = proc_create_data(s, 0, NULL, &flashcache_errors_operations, dmc);
+	#endif
 	kfree(s);
 
 	s = flashcache_cons_procfs_cachename(dmc, "flashcache_iosize_hist");
-	entry = create_proc_entry(s, 0, NULL);
-	if (entry) {
-		entry->proc_fops =  &flashcache_iosize_hist_operations;
-		entry->data = dmc;
-	}
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		entry = create_proc_entry(s, 0, NULL);
+		if (entry) {
+			entry->proc_fops =  &flashcache_iosize_hist_operations;
+			entry->data = dmc;
+		}
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		entry = proc_create_data(s, 0, NULL, &flashcache_iosize_hist_operations, dmc);
+	#endif
 	kfree(s);
 
 	s = flashcache_cons_procfs_cachename(dmc, "flashcache_pidlists");
-	entry = create_proc_entry(s, 0, NULL);
-	if (entry) {
-		entry->proc_fops =  &flashcache_pidlists_operations;
-		entry->data = dmc;			
-	}
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
+		entry = create_proc_entry(s, 0, NULL);
+		if (entry) {
+			entry->proc_fops =  &flashcache_pidlists_operations;
+			entry->data = dmc;			
+		}
+	#endif
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+		entry = proc_create_data(s, 0, NULL, &flashcache_pidlists_operations, dmc);
+	#endif
 	kfree(s);
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
