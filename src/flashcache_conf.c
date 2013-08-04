@@ -1607,6 +1607,8 @@ flashcache_notify_reboot(struct notifier_block *this,
 		if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 			flashcache_sync_for_remove(dmc);
 			flashcache_writeback_md_store(dmc);
+			dm_put_device(dmc->tgt, dmc->cache_dev);
+			dm_put_device(dmc->tgt, dmc->disk_dev);
 		}
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
