@@ -425,7 +425,7 @@ struct cacheblock {
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	u_int64_t 	checksum;
 #endif
-};
+} __attribute__((packed));
 
 struct flash_superblock {
 	sector_t size;		/* Cache size */
