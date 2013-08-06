@@ -296,6 +296,7 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 	header->md_block_size = dmc->md_block_size;
 	header->size = dmc->size;
 	header->assoc = dmc->assoc;
+	header->disk_assoc = dmc->disk_assoc;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
 	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
@@ -368,6 +369,7 @@ flashcache_writethrough_create(struct cache_c *dmc)
 		DMERR("flashcache_writethrough_create: Unable to allocate cache md");
 		return 1;
 	}
+	memset(dmc->cache, 0, order);
 	/* Initialize the cache structs */
 	for (i = 0; i < dmc->size ; i++) {
 		dmc->cache[i].dbn = 0;
@@ -375,6 +377,7 @@ flashcache_writethrough_create(struct cache_c *dmc)
 		dmc->cache[i].checksum = 0;
 #endif
 		dmc->cache[i].cache_state = INVALID;
+		dmc->cache[i].lru_state = 0;
 		dmc->cache[i].nr_queued = 0;
 	}
 	dmc->md_blocks = 0;
@@ -452,6 +455,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 		DMERR("flashcache_writeback_create: Unable to allocate cache md");
 		return 1;
 	}
+	memset(dmc->cache, 0, order);
 	/* Initialize the cache structs */
 	for (i = 0; i < dmc->size ; i++) {
 		dmc->cache[i].dbn = 0;
@@ -459,6 +463,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 		dmc->cache[i].checksum = 0;
 #endif
 		dmc->cache[i].cache_state = INVALID;
+		dmc->cache[i].lru_state = 0;
 		dmc->cache[i].nr_queued = 0;
 	}
 	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
@@ -543,6 +548,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	header->md_block_size = dmc->md_block_size;
 	header->size = dmc->size;
 	header->assoc = dmc->assoc;
+	header->disk_assoc = dmc->disk_assoc;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
 	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
@@ -613,6 +619,13 @@ flashcache_writeback_load(struct cache_c *dmc)
 		DMERR("flashcache_writeback_load: Unknown version %d found in superblock!", header->cache_version);
 		return 1;
 	}
+	dmc->disk_assoc = header->assoc;
+	if (header->cache_version < 3)
+		/* Disk Assoc was introduced in On SSD version 3 */
+		dmc->disk_assoc = 0;
+	if (dmc->disk_assoc != 0)
+		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
+
 	dmc->on_ssd_version = header->cache_version;
 		
 	DPRINTK("Loaded cache conf: version(%d), block size(%u), md block size(%u), cache size(%llu), " \
@@ -664,6 +677,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 		vfree((void *)header);
 		return 1;
 	}
+	memset(dmc->cache, 0, order);
 	/* Read the metadata in large blocks and populate incore state */
 	meta_data_cacheblock = (struct flash_cacheblock *)vmalloc(METADATA_IO_BLOCKSIZE);
 	if (!meta_data_cacheblock) {
@@ -772,6 +786,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 	header->block_size = dmc->block_size;
 	header->md_block_size = dmc->md_block_size;
 	header->assoc = dmc->assoc;
+	header->disk_assoc = dmc->disk_assoc;
 	header->cache_sb_state = CACHE_MD_STATE_DIRTY;
 	strncpy(header->disk_devname, dmc->disk_devname, DEV_PATHLEN);
 	strncpy(header->cache_devname, dmc->dm_vdevname, DEV_PATHLEN);
@@ -809,7 +824,7 @@ flashcache_clean_all_sets(struct work_struct *work)
 	int i;
 	
 	for (i = 0 ; i < dmc->num_sets ; i++)
-		flashcache_clean_set(dmc, i);
+		flashcache_clean_set(dmc, i, 0);
 }
 
 static int inline
@@ -984,14 +999,34 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			goto bad3;
 		}
 	}
-
 	if (!dmc->assoc)
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 
+	if (argc >= 8) {
+		if (sscanf(argv[8], "%u", &dmc->disk_assoc) != 1) {
+			ti->error = "flashcache: Invalid disk associativity";
+			r = -EINVAL;
+			goto bad3;
+		}
+		if (!dmc->disk_assoc || (dmc->disk_assoc & (dmc->disk_assoc - 1)) ||
+		    dmc->disk_assoc > FLASHCACHE_MAX_DISK_ASSOC ||
+		    dmc->disk_assoc < FLASHCACHE_MIN_DISK_ASSOC ||
+		    dmc->size < dmc->disk_assoc ||
+		    (dmc->assoc * dmc->block_shift) < dmc->disk_assoc) {
+			printk(KERN_ERR "Invalid Disk Assoc assoc %d disk_assoc %d size %ld\n",
+			       dmc->assoc, dmc->disk_assoc, dmc->size);
+			ti->error = "flashcache: Invalid disk associativity";
+			r = -EINVAL;
+			goto bad3;
+		}
+	}
+	if (dmc->disk_assoc != 0)
+		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
+
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		if (argc >= 9) {
-			if (sscanf(argv[8], "%u", &dmc->md_block_size) != 1) {
+			if (sscanf(argv[9], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
 				goto bad3;
@@ -1047,25 +1082,20 @@ init:
 		vfree((void *)dmc->cache);
 		goto bad3;
 	}				
-
+	memset(dmc->cache_sets, 0, order);
 	for (i = 0 ; i < dmc->num_sets ; i++) {
 		dmc->cache_sets[i].set_fifo_next = i * dmc->assoc;
 		dmc->cache_sets[i].set_clean_next = i * dmc->assoc;
-		dmc->cache_sets[i].nr_dirty = 0;
-		dmc->cache_sets[i].clean_inprog = 0;
-		dmc->cache_sets[i].dirty_fallow = 0;
 		dmc->cache_sets[i].fallow_tstamp = jiffies;
 		dmc->cache_sets[i].fallow_next_cleaning = jiffies;
-		dmc->cache_sets[i].lru_tail = FLASHCACHE_LRU_NULL;
-		dmc->cache_sets[i].lru_head = FLASHCACHE_LRU_NULL;
+		dmc->cache_sets[i].hotlist_lru_tail = FLASHCACHE_LRU_NULL;
+		dmc->cache_sets[i].hotlist_lru_head = FLASHCACHE_LRU_NULL;
+		dmc->cache_sets[i].warmlist_lru_tail = FLASHCACHE_LRU_NULL;
+		dmc->cache_sets[i].warmlist_lru_head = FLASHCACHE_LRU_NULL;
 	}
-
-	/* Push all blocks into the set specific LRUs */
-	for (i = 0 ; i < dmc->size ; i++) {
-		dmc->cache[i].lru_prev = FLASHCACHE_LRU_NULL;
-		dmc->cache[i].lru_next = FLASHCACHE_LRU_NULL;
-		flashcache_reclaim_lru_movetail(dmc, i);
-	}
+	
+	dmc->hot_list_pct = FLASHCACHE_LRU_HOT_PCT_DEFAULT;
+	flashcache_reclaim_init_lru_lists(dmc);
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		order = (dmc->md_blocks - 1) * sizeof(struct cache_md_block_head);
@@ -1116,6 +1146,10 @@ init:
 	dmc->sysctl_fallow_clean_speed = FALLOW_CLEAN_SPEED;
 	dmc->sysctl_fallow_delay = FALLOW_DELAY;
 	dmc->sysctl_skip_seq_thresh_kb = SKIP_SEQUENTIAL_THRESHOLD;
+	dmc->sysctl_clean_on_read_miss = 0;
+	dmc->sysctl_clean_on_write_miss = 0;
+	dmc->sysctl_lru_hot_pct = 75;
+	dmc->sysctl_lru_promote_thresh = 2;
 
 	/* Sequential i/o spotting */	
 	for (i = 0; i < SEQUENTIAL_TRACKER_QUEUE_DEPTH; i++) {
@@ -1394,12 +1428,14 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 		       "\tmetadata dirties(%lu), metadata cleans(%lu)\n" \
 		       "\tmetadata batch(%lu) metadata ssd writes(%lu)\n" \
 		       "\tcleanings(%lu) fallow cleanings(%lu)\n"	\
-		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n",
+		       "\tno room(%lu) front merge(%lu) back merge(%lu)\n" \
+		       "\tforce_clean_block(%lu)\n",
 		       stats->enqueues, stats->pending_inval,
 		       stats->md_write_dirty, stats->md_write_clean,
 		       stats->md_write_batch, stats->md_ssd_writes,
 		       stats->cleanings, stats->fallow_cleanings, 
-		       stats->noroom, stats->front_merge, stats->back_merge);
+		       stats->noroom, stats->front_merge, stats->back_merge,
+		       stats->force_clean_block);
 	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
 		DMEMIT("\tread hits(%lu), read hit percent(%d)\n"	\
 		       "\twrite hits(%lu) write hit percent(%d)\n"	\
@@ -1438,12 +1474,15 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	       "\tuncached reads(%lu), uncached writes(%lu), uncached IO requeue(%lu)\n" \
 	       "\tdisk read errors(%d), disk write errors(%d) ssd read errors(%d) ssd write errors(%d)\n" \
 	       "\tuncached sequential reads(%lu), uncached sequential writes(%lu)\n" \
-	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)",
+	       "\tpid_adds(%lu), pid_dels(%lu), pid_drops(%lu) pid_expiry(%lu)\n" \
+	       "\tlru hot blocks(%d), lru warm blocks(%d)\n" \
+	       "\tlru promotions(%lu), lru demotions(%lu)",
 	       stats->disk_reads, stats->disk_writes, stats->ssd_reads, stats->ssd_writes,
 	       stats->uncached_reads, stats->uncached_writes, stats->uncached_io_requeue,
                dmc->flashcache_errors.disk_read_errors, dmc->flashcache_errors.disk_write_errors, dmc->flashcache_errors.ssd_read_errors, dmc->flashcache_errors.ssd_write_errors,
 	       stats->uncached_sequential_reads, stats->uncached_sequential_writes,
-	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry);
+	       stats->pid_adds, stats->pid_dels, stats->pid_drops, stats->expiry,
+	       dmc->lru_hot_blocks, dmc->lru_warm_blocks, stats->lru_promotions, stats->lru_demotions);
 	if (dmc->sysctl_io_latency_hist) {
 		int i;
 		
@@ -1492,6 +1531,8 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		       dmc->size*dmc->block_size>>11, dmc->assoc,
 		       dmc->block_size>>(10-SECTOR_SHIFT));
 	}
+	DMEMIT("\tdisk assoc(%uK)\n",
+	       dmc->disk_assoc >> (10 - SECTOR_SHIFT));
 	DMEMIT("\tskip sequential thresh(%uK)\n",
 	       dmc->sysctl_skip_seq_thresh_kb);
 	DMEMIT("\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",

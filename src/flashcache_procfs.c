@@ -203,6 +203,26 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
 	return 0;
 }
 
+static int
+flashcache_lru_hot_pct_sysctl(ctl_table *table, int write,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+			       struct file *file, 
+#endif
+			       void __user *buffer, 
+			       size_t *length, loff_t *ppos)
+{
+	struct cache_c *dmc = (struct cache_c *)table->extra1;
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
+        proc_dointvec(table, write, file, buffer, length, ppos);
+#else
+        proc_dointvec(table, write, buffer, length, ppos);
+#endif
+	if (write)
+		flashcache_reclaim_rebalance_lru(dmc, dmc->sysctl_lru_hot_pct);
+	return 0;
+}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 #define CTL_UNNUMBERED			-2
 #endif
@@ -212,7 +232,7 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	17
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	21
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -397,6 +417,45 @@ static struct flashcache_writeback_sysctl_table {
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
 		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "clean_on_read_miss",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "clean_on_write_miss",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "lru_promote_thresh",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "lru_hot_pct;",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &flashcache_lru_hot_pct_sysctl,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.strategy	= &sysctl_intvec,
+#endif
+		},
 	},
 	.dev = {
 		{
@@ -438,7 +497,7 @@ static struct flashcache_writeback_sysctl_table {
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	9
+#define FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS	11
 
 static struct flashcache_writethrough_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -542,6 +601,27 @@ static struct flashcache_writethrough_sysctl_table {
 			.mode		= 0644,
 			.proc_handler	= &proc_dointvec,
 		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "lru_promote_thresh",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "lru_hot_pct;",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &flashcache_lru_hot_pct_sysctl,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.strategy	= &sysctl_intvec,
+#endif
+		},
 	},
 	.dev = {
 		{
@@ -615,6 +695,14 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_fallow_delay;
 	else if (strcmp(vars->procname, "skip_seq_thresh_kb") == 0) 
 		return &dmc->sysctl_skip_seq_thresh_kb;
+	else if (strcmp(vars->procname, "clean_on_read_miss") == 0) 
+		return &dmc->sysctl_clean_on_read_miss;
+	else if (strcmp(vars->procname, "clean_on_write_miss") == 0) 
+		return &dmc->sysctl_clean_on_write_miss;
+	else if (strcmp(vars->procname, "lru_promote_thresh") == 0) 
+		return &dmc->sysctl_lru_promote_thresh;
+	else if (strcmp(vars->procname, "lru_hot_pct") == 0) 
+		return &dmc->sysctl_lru_hot_pct;
 	VERIFY(0);
 	return NULL;
 }

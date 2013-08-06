@@ -38,6 +38,7 @@
 #include <linux/sysctl.h>
 #include <linux/version.h>
 #include <linux/pid.h>
+#include <linux/jhash.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
@@ -536,10 +537,25 @@ static unsigned long
 hash_block(struct cache_c *dmc, sector_t dbn)
 {
 	unsigned long set_number, value;
+        int num_cache_sets = dmc->size >> dmc->assoc_shift;
 
-	value = (unsigned long)
-		(dbn >> (dmc->block_shift + dmc->assoc_shift));
-	set_number = value % dmc->num_sets;
+	/*
+	 * Starting in Flashcache SSD Version 3 :
+	 * We map a sequential cluster of disk_assoc blocks onto a given set.
+	 * But each disk_assoc cluster can be randomly placed in any set.
+	 * But if we are running on an older on-ssd cache, we preserve old
+	 * behavior.
+	 */
+	if (dmc->on_ssd_version < 3 || dmc->disk_assoc == 0) {
+		value = (unsigned long)
+			(dbn >> (dmc->block_shift + dmc->assoc_shift));
+	} else {
+		/* Shift out the low disk_assoc bits */
+		value = (unsigned long) (dbn >> dmc->disk_assoc_shift);
+		/* Then place it in a random set */
+		value = jhash_1word(value, 0xbeef);
+	}
+	set_number = value % num_cache_sets;
 	DPRINTK("Hash: %llu(%lu)->%lu", dbn, value, set_number);
 	return set_number;
 }
@@ -558,7 +574,7 @@ find_valid_dbn(struct cache_c *dmc, sector_t dbn,
 			*valid = i;
 			if (dmc->sysctl_reclaim_policy == FLASHCACHE_LRU &&
 			    ((dmc->cache[i].cache_state & BLOCK_IO_INPROG) == 0))
-				flashcache_reclaim_lru_movetail(dmc, i);
+				flashcache_lru_accessed(dmc, i);
 			/* 
 			 * If the block was DIRTY and earmarked for cleaning because it was old, make 
 			 * the block young again.
@@ -573,57 +589,17 @@ find_valid_dbn(struct cache_c *dmc, sector_t dbn,
 	}
 	if (*valid == -1 && *invalid != -1)
 		if (dmc->sysctl_reclaim_policy == FLASHCACHE_LRU)
-			flashcache_reclaim_lru_movetail(dmc, *invalid);
+			flashcache_lru_accessed(dmc, *invalid);
 }
 
 /* Search for a slot that we can reclaim */
 static void
 find_reclaim_dbn(struct cache_c *dmc, int start_index, int *index)
 {
-	int set = start_index / dmc->assoc;
-	struct cache_set *cache_set = &dmc->cache_sets[set];
-	struct cacheblock *cacheblk;
-	
-	if (dmc->sysctl_reclaim_policy == FLASHCACHE_FIFO) {
-		int end_index = start_index + dmc->assoc;
-		int slots_searched = 0;
-		int i;
-
-		i = cache_set->set_fifo_next;
-		while (slots_searched < dmc->assoc) {
-			VERIFY(i >= start_index);
-			VERIFY(i < end_index);
-			if (dmc->cache[i].cache_state == VALID) {
-				*index = i;
-				VERIFY((dmc->cache[*index].cache_state & FALLOW_DOCLEAN) == 0);
-				break;
-			}
-			slots_searched++;
-			i++;
-			if (i == end_index)
-				i = start_index;
-		}
-		i++;
-		if (i == end_index)
-			i = start_index;
-		cache_set->set_fifo_next = i;
-	} else { /* reclaim_policy == FLASHCACHE_LRU */
-		int lru_rel_index;
-
-		lru_rel_index = cache_set->lru_head;
-		while (lru_rel_index != FLASHCACHE_LRU_NULL) {
-			cacheblk = &dmc->cache[lru_rel_index + start_index];
-			if (cacheblk->cache_state == VALID) {
-				VERIFY((cacheblk - &dmc->cache[0]) == 
-				       (lru_rel_index + start_index));
-				*index = cacheblk - &dmc->cache[0];
-				VERIFY((dmc->cache[*index].cache_state & FALLOW_DOCLEAN) == 0);
-				flashcache_reclaim_lru_movetail(dmc, *index);
-				break;
-			}
-			lru_rel_index = cacheblk->lru_next;
-		}
-	}
+	if (dmc->sysctl_reclaim_policy == FLASHCACHE_FIFO)
+		flashcache_reclaim_fifo_get_old_block(dmc, start_index, index);
+	else /* flashcache_reclaim_policy == FLASHCACHE_LRU */
+		flashcache_reclaim_lru_get_old_block(dmc, start_index, index);
 }
 
 /* 
@@ -902,7 +878,7 @@ flashcache_md_write_done(struct kcached_job *job)
 			}
 			/* Kick off more cleanings */
 			if (action == WRITEDISK)
-				flashcache_clean_set(dmc, index / dmc->assoc);
+				flashcache_clean_set(dmc, index / dmc->assoc, 0);
 			else
 				flashcache_sync_blocks(dmc);
 			dmc->flashcache_stats.cleanings++;
@@ -1018,7 +994,7 @@ flashcache_kcopyd_callback(int read_err, unsigned int write_err, void *context)
 			job->error = write_err;
 		}
 		flashcache_do_pending(job);
-		flashcache_clean_set(dmc, index / dmc->assoc); /* Kick off more cleanings */
+		flashcache_clean_set(dmc, index / dmc->assoc, 0); /* Kick off more cleanings */
 		dmc->flashcache_stats.cleanings++;
 	}
 }
@@ -1120,7 +1096,7 @@ flashcache_can_clean(struct cache_c *dmc,
 }
 
 void
-flashcache_clean_set(struct cache_c *dmc, int set)
+flashcache_clean_set(struct cache_c *dmc, int set, int force_clean_blocks)
 {
 	unsigned long flags;
 	int threshold_clean = 0;
@@ -1131,9 +1107,16 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	struct cache_set *cache_set = &dmc->cache_sets[set];
 	struct cacheblock *cacheblk;
 	int do_delayed_clean = 0;
+	int scanned = 0;
 
 	if (dmc->cache_mode != FLASHCACHE_WRITE_BACK)
 		return;
+	if (dmc->sysctl_reclaim_policy == FLASHCACHE_FIFO)
+		/* 
+		 * We only do force cleaning on a cache miss if reclaim policy
+		 * is LRU.
+		 */
+		force_clean_blocks = 0;
 	/* 
 	 * If a removal of this device is in progress, don't kick off 
 	 * any more cleanings. This isn't sufficient though. We still need to
@@ -1194,18 +1177,32 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 	}
 	if (nr_writes > 0)
 		cache_set->fallow_next_cleaning = jiffies + HZ / dmc->sysctl_fallow_clean_speed;
-	if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
-	    !flashcache_can_clean(dmc, cache_set, nr_writes))
-		goto out;
 	/*
-	 * We picked up all the dirty fallow blocks we can. We can still clean more to 
-	 * remain under the dirty threshold. Clean some more blocks.
+	 * In the miss path, we try to clean at least one block so the cache set does not
+	 * fill up with dirty fallow blocks.
 	 */
-	threshold_clean = cache_set->nr_dirty - dmc->dirty_thresh_set;
+	if (force_clean_blocks == 0) {
+		if (cache_set->nr_dirty < dmc->dirty_thresh_set ||
+		    !flashcache_can_clean(dmc, cache_set, nr_writes))
+			goto out;
+		/*
+		 * We picked up all the dirty fallow blocks we can. We can still clean more to
+		 * remain under the dirty threshold. Clean some more blocks.
+		 */
+		threshold_clean = cache_set->nr_dirty - dmc->dirty_thresh_set;
+	} else if (cache_set->nr_dirty > 0) {
+		/* We want to clean at least 1 block - miss path */
+		if (cache_set->nr_dirty > dmc->dirty_thresh_set) {
+			/* We can definitely clean some based on thresholds */
+			threshold_clean = cache_set->nr_dirty - dmc->dirty_thresh_set;
+			force_clean_blocks = 0;
+		} else if (nr_writes == 0) {
+			/* XXX - Should be nr_writes < force_clean_blocks */
+			dmc->flashcache_stats.force_clean_block++;
+			threshold_clean = force_clean_blocks;
+		}
+	}
 	if (dmc->sysctl_reclaim_policy == FLASHCACHE_FIFO) {
-		int scanned;
-		
-		scanned = 0;
 		i = cache_set->set_clean_next;
 		DPRINTK("flashcache_clean_set: Set %d", set);
 		while (scanned < dmc->assoc &&
@@ -1227,20 +1224,33 @@ flashcache_clean_set(struct cache_c *dmc, int set)
 		cache_set->set_clean_next = i;
 	} else { /* reclaim_policy == FLASHCACHE_LRU */
 		int lru_rel_index;
+		int iter;
 
-		lru_rel_index = cache_set->lru_head;
-		while (lru_rel_index != FLASHCACHE_LRU_NULL && 
-		       flashcache_can_clean(dmc, cache_set, nr_writes) &&
-		       nr_writes < threshold_clean) {
-			cacheblk = &dmc->cache[lru_rel_index + start_index];
-			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
-				cacheblk->cache_state |= DISKWRITEINPROG;
-				flashcache_clear_fallow(dmc, lru_rel_index + start_index);
-				writes_list[nr_writes].dbn = cacheblk->dbn;
-				writes_list[nr_writes].index = cacheblk - &dmc->cache[0];
-				nr_writes++;
+		for (iter = 0 ; iter < 2 ; iter++) {
+			if (iter == 0)
+				lru_rel_index = cache_set->warmlist_lru_head;
+			else
+				lru_rel_index = cache_set->hotlist_lru_head;
+			while (lru_rel_index != FLASHCACHE_LRU_NULL &&
+			       flashcache_can_clean(dmc, cache_set, nr_writes) &&
+			       nr_writes < threshold_clean) {
+				cacheblk = &dmc->cache[lru_rel_index + start_index];
+				if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
+					cacheblk->cache_state |= DISKWRITEINPROG;
+					flashcache_clear_fallow(dmc, i);
+					writes_list[nr_writes].dbn = cacheblk->dbn;
+					writes_list[nr_writes].index = cacheblk - &dmc->cache[0];
+					nr_writes++;
+				}
+				scanned++;
+				/*
+				 * If we are forced to clean on replacement, only clean blocks at
+				 * the tail end of the LRU list !
+				 */
+				if (force_clean_blocks > 0 && scanned == force_clean_blocks)
+					goto out;
+				lru_rel_index = cacheblk->lru_next;
 			}
-			lru_rel_index = cacheblk->lru_next;
 		}
 	}
 out:
@@ -1358,7 +1368,8 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		dm_io_async_bvec(1, &job->job_io_regions.disk, READ,
 				 bio->bi_io_vec + bio->bi_idx,
 				 flashcache_io_callback, job);
-		flashcache_clean_set(dmc, index / dmc->assoc);
+		flashcache_clean_set(dmc, index / dmc->assoc,
+				     dmc->sysctl_clean_on_read_miss);
 	}
 }
 
@@ -1403,7 +1414,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		DPRINTK("Cache read: Block %llu(%lu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
 		if (res == -1)
-			flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector));
+			flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector), 0);
 		/* Start uncached IO */
 		flashcache_start_uncached_io(dmc, bio);
 		return;
@@ -1506,12 +1517,40 @@ flashcache_inval_block_set(struct cache_c *dmc, int set, struct bio *bio, int rw
 static int
 flashcache_inval_blocks(struct cache_c *dmc, struct bio *bio)
 {	
-	sector_t io_start = bio->bi_sector;
-	sector_t io_end = bio->bi_sector + (to_sector(bio->bi_size) - 1);
+	sector_t mask;
+	sector_t io_start;
+	sector_t io_end;
 	int start_set, end_set;
 	int queued;
 	struct pending_job *pjob1, *pjob2;
 
+	/* If the on-ssd cache version is < 3, we revert to old style invalidations ! */
+	if (dmc->on_ssd_version < 3) {
+		io_start = bio->bi_sector;
+		io_end = (bio->bi_sector + (to_sector(bio->bi_size) - 1));
+	} else {
+		/*
+		 * Assume a 4KB blocksize.
+		 * Knowns :
+		 * 1) DM will break up IOs at 4KB boundaries.
+		 * 2) Flashcache will only cache *exactly* 4KB IOs.
+		 * Conclusion :
+		 * Flashcache will only cache an IO that begins exactly at a 4KB
+		 * boundary and at a 4KB length !
+		 * The incoming IO might be a smaller than 4KB IO, where bi_sector
+		 * is NOT 4KB aligned or bi_size < 4KB
+		 * To check for overlaps, we simply need to check if the 4KB block
+		 * that [bi_sector, bi_sector + bi_size] overlaps with a block that
+		 * is in the cache.
+		 */
+		mask = ~((1 << dmc->block_shift) - 1);
+		io_start = bio->bi_sector & mask;
+		/*
+		 * Note that with this bit of logic, io_start == io_end, but that
+		 * is deliberate, to make the legacy logic below work.
+		 */
+		io_end = (bio->bi_sector + (to_sector(bio->bi_size) - 1)) & mask;
+	}
 	pjob1 = flashcache_alloc_pending_job(dmc);
 	if (unlikely(dmc->sysctl_error_inject & INVAL_PENDING_JOB_ALLOC_FAIL)) {
 		if (pjob1) {
@@ -1617,7 +1656,8 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 					 bio->bi_io_vec + bio->bi_idx,
 					 flashcache_io_callback, job);
 		}
-		flashcache_clean_set(dmc, index / dmc->assoc);
+		flashcache_clean_set(dmc, index / dmc->assoc, 
+				     dmc->sysctl_clean_on_write_miss);
 	}
 }
 
@@ -1665,7 +1705,7 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 				dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
 						 bio->bi_io_vec + bio->bi_idx,
 						 flashcache_io_callback, job);
-				flashcache_clean_set(dmc, index / dmc->assoc);
+				flashcache_clean_set(dmc, index / dmc->assoc, 0);
 			} else {
 				VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH);
 				/* Write data to both disk and cache */
@@ -1735,7 +1775,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	}
 	/* Start uncached IO */
 	flashcache_start_uncached_io(dmc, bio);
-	flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector));
+	flashcache_clean_set(dmc, hash_block(dmc, bio->bi_sector), 0);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
@@ -1749,6 +1789,21 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 #endif
 #endif
 #endif
+
+static void
+flashcache_do_block_checks(struct cache_c *dmc, struct bio *bio)
+{
+	sector_t mask;
+	sector_t io_start;
+	sector_t io_end;
+
+	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
+	mask = ~((1 << dmc->block_shift) - 1);
+	io_start = bio->bi_sector & mask;
+	io_end = (bio->bi_sector + (to_sector(bio->bi_size) - 1)) & mask;
+	/* The incoming bio must NOT straddle a blocksize boundary */
+	VERIFY(io_start == io_end);
+}
 
 /*
  * Decide the mapping and perform necessary cache operations for a bio request.
@@ -1771,7 +1826,11 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 	if (bio_barrier(bio))
 		return -EOPNOTSUPP;
 
-	VERIFY(to_sector(bio->bi_size) <= dmc->block_size);
+	/*
+	 * Basic check to make sure blocks coming in are as we
+	 * expect them to be.
+	 */
+	flashcache_do_block_checks(dmc, bio);
 
 	if (bio_data_dir(bio) == READ)
 		dmc->flashcache_stats.reads++;

@@ -447,39 +447,6 @@ flashcache_bio_endio(struct bio *bio, int error,
 #endif	
 }
 
-void
-flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index)
-{
-	int set = index / dmc->assoc;
-	int start_index = set * dmc->assoc;
-	int my_index = index - start_index;
-	struct cacheblock *cacheblk = &dmc->cache[index];
-
-	/* Remove from LRU */
-	if (likely((cacheblk->lru_prev != FLASHCACHE_LRU_NULL) ||
-		   (cacheblk->lru_next != FLASHCACHE_LRU_NULL))) {
-		if (cacheblk->lru_prev != FLASHCACHE_LRU_NULL)
-			dmc->cache[cacheblk->lru_prev + start_index].lru_next = 
-				cacheblk->lru_next;
-		else
-			dmc->cache_sets[set].lru_head = cacheblk->lru_next;
-		if (cacheblk->lru_next != FLASHCACHE_LRU_NULL)
-			dmc->cache[cacheblk->lru_next + start_index].lru_prev = 
-				cacheblk->lru_prev;
-		else
-			dmc->cache_sets[set].lru_tail = cacheblk->lru_prev;
-	}
-	/* And add it to LRU Tail */
-	cacheblk->lru_next = FLASHCACHE_LRU_NULL;
-	cacheblk->lru_prev = dmc->cache_sets[set].lru_tail;
-	if (dmc->cache_sets[set].lru_tail == FLASHCACHE_LRU_NULL)
-		dmc->cache_sets[set].lru_head = my_index;
-	else
-		dmc->cache[dmc->cache_sets[set].lru_tail + start_index].lru_next = 
-			my_index;
-	dmc->cache_sets[set].lru_tail = my_index;
-}
-
 static int 
 cmp_dbn(const void *a, const void *b)
 {
@@ -780,6 +747,5 @@ EXPORT_SYMBOL(new_kcached_job);
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm_callback);
 #endif
 EXPORT_SYMBOL(flashcache_dm_io_sync_vm);
-EXPORT_SYMBOL(flashcache_reclaim_lru_movetail);
 EXPORT_SYMBOL(flashcache_merge_writes);
 EXPORT_SYMBOL(flashcache_enq_pending);

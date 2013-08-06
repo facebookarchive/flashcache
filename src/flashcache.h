@@ -25,7 +25,7 @@
 #ifndef FLASHCACHE_H
 #define FLASHCACHE_H
 
-#define FLASHCACHE_VERSION		2
+#define FLASHCACHE_VERSION		3
 
 #define DEV_PATHLEN	128
 
@@ -88,6 +88,7 @@
 /* Default cache parameters */
 #define DEFAULT_CACHE_SIZE		65536
 #define DEFAULT_CACHE_ASSOC		512
+#define DEFAULT_DISK_ASSOC      512     /* 256 KB in 512b sectors */
 #define DEFAULT_BLOCK_SIZE		8	/* 4 KB */
 #define DEFAULT_MD_BLOCK_SIZE		8	/* 4 KB */
 #define DEFAULT_MD_BLOCK_SIZE_BYTES	(DEFAULT_MD_BLOCK_SIZE * 512)	/* 4 KB */
@@ -104,6 +105,8 @@
  */
 #define FLASHCACHE_MIN_ASSOC	 256
 #define FLASHCACHE_MAX_ASSOC	8192
+#define FLASHCACHE_MIN_DISK_ASSOC       256     /* Min Disk Assoc of 128KB in sectors */
+#define FLASHCACHE_MAX_DISK_ASSOC       2048    /* Max Disk Assoc of 1MB in sectors */
 #define FLASHCACHE_LRU_NULL	0xFFFF
 
 struct cacheblock;
@@ -113,10 +116,23 @@ struct cache_set {
 	u_int32_t		set_clean_next;
 	u_int16_t		clean_inprog;
 	u_int16_t		nr_dirty;
-	u_int16_t		lru_head, lru_tail;
 	u_int16_t		dirty_fallow;
 	unsigned long 		fallow_tstamp;
 	unsigned long 		fallow_next_cleaning;
+	/*
+	 * 2 LRU queues/cache set.
+	 * 1) A block is faulted into the MRU end of the warm list from disk.
+	 * 2) When the # of accesses hits a threshold, it is promoted to the
+	 * (MRU) end of the hot list. To keep the lists in equilibrium, the
+	 * LRU block from the host list moves to the MRU end of the warm list.
+	 * 3) Within each list, an access will move the block to the MRU end.
+	 * 4) Reclaims happen from the LRU end of the warm list. After reclaim
+	 * we move a block from the LRU end of the hot list to the MRU end of
+	 * the warm list.
+	 */
+	u_int16_t               hotlist_lru_head, hotlist_lru_tail;
+	u_int16_t               warmlist_lru_head, warmlist_lru_tail;
+	u_int16_t               lru_hot_blocks, lru_warm_blocks;
 };
 
 struct flashcache_errors {
@@ -164,6 +180,9 @@ struct flashcache_stats {
 	unsigned long skipclean;
 	unsigned long trim_blocks;
 	unsigned long clean_set_ios;
+	unsigned long force_clean_block;
+	unsigned long lru_promotions;
+	unsigned long lru_demotions;
 };
 
 /* 
@@ -205,6 +224,9 @@ struct cache_c {
 	
 	sector_t size;			/* Cache size */
 	unsigned int assoc;		/* Cache associativity */
+	unsigned int disk_assoc;	/* Disk associativity */
+	unsigned int disk_assoc_shift;	/* Disk associativity in bits */
+
 	unsigned int block_size;	/* Cache block size */
 	unsigned int block_shift;	/* Cache block size in bits */
 	unsigned int block_mask;	/* Cache block mask */
@@ -258,6 +280,10 @@ struct cache_c {
 	int num_blacklist_pids, num_whitelist_pids;
 	unsigned long blacklist_expire_check, whitelist_expire_check;
 
+	int hot_list_pct;
+	int lru_hot_blocks;
+	int lru_warm_blocks;
+
 #define PENDING_JOB_HASH_SIZE		32
 	struct pending_job *pending_job_hashbuckets[PENDING_JOB_HASH_SIZE];
 	
@@ -294,6 +320,10 @@ struct cache_c {
 	int sysctl_fallow_clean_speed;
 	int sysctl_fallow_delay;
 	int sysctl_skip_seq_thresh_kb;
+	int sysctl_clean_on_read_miss;
+	int sysctl_clean_on_write_miss;
+	int sysctl_lru_hot_pct;
+	int sysctl_lru_promote_thresh;
 
 	/* Sequential I/O spotter */
 	struct sequential_io	seq_recent_ios[SEQUENTIAL_TRACKER_QUEUE_DEPTH];
@@ -369,6 +399,10 @@ enum {
 #define FALLOW_DOCLEAN		(DIRTY_FALLOW_1 | DIRTY_FALLOW_2)
 #define BLOCK_IO_INPROG	(DISKREADINPROG | DISKWRITEINPROG | CACHEREADINPROG | CACHEWRITEINPROG)
 
+/* lru_state in cache block */
+#define LRU_HOT			0x0001	/* On Hot LRU List */
+#define LRU_WARM		0x0002	/* On Warm LRU List */
+
 /* Cache metadata is read by Flashcache utilities */
 #ifndef __KERNEL__
 typedef u_int64_t sector_t;
@@ -385,6 +419,8 @@ struct cacheblock {
 	u_int16_t	cache_state;
 	int16_t 	nr_queued;	/* jobs in pending queue */
 	u_int16_t	lru_prev, lru_next;
+	u_int8_t        use_cnt;
+	u_int8_t        lru_state;
 	sector_t 	dbn;	/* Sector number of the cached block */
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	u_int64_t 	checksum;
@@ -402,6 +438,7 @@ struct flash_superblock {
 	sector_t disk_devsize;
 	u_int32_t cache_version;
 	u_int32_t md_block_size;
+	u_int32_t disk_assoc;
 };
 
 /* 
@@ -481,6 +518,8 @@ struct cache_md_block_head {
 #define FALLOW_SPEED_MIN	1
 #define FALLOW_SPEED_MAX	100
 #define FALLOW_CLEAN_SPEED	2
+
+#define FLASHCACHE_LRU_HOT_PCT_DEFAULT	50
 
 /* DM async IO mempool sizing */
 #define FLASHCACHE_ASYNC_SIZE 1024
@@ -567,9 +606,13 @@ void flashcache_md_write(struct kcached_job *job);
 void flashcache_md_write_kickoff(struct kcached_job *job);
 void flashcache_do_io(struct kcached_job *job);
 void flashcache_uncached_io_complete(struct kcached_job *job);
-void flashcache_clean_set(struct cache_c *dmc, int set);
+void flashcache_clean_set(struct cache_c *dmc, int set, int force_clean_blocks);
 void flashcache_sync_all(struct cache_c *dmc);
-void flashcache_reclaim_lru_movetail(struct cache_c *dmc, int index);
+void flashcache_reclaim_fifo_get_old_block(struct cache_c *dmc, int start_index, int *index);
+void flashcache_reclaim_lru_get_old_block(struct cache_c *dmc, int start_index, int *index);
+void flashcache_reclaim_init_lru_lists(struct cache_c *dmc);
+void flashcache_lru_accessed(struct cache_c *dmc, int index);
+void flashcache_reclaim_rebalance_lru(struct cache_c *dmc, int new_lru_hot_pct);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 
 			     int *nr_writes, int set);
