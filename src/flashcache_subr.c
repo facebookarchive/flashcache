@@ -140,12 +140,20 @@ flashcache_free_pending_job(struct pending_job *job)
 
 #define FLASHCACHE_PENDING_JOB_HASH(INDEX)		((INDEX) % PENDING_JOB_HASH_SIZE)
 
+/*
+ * Locking Note : enq/deq pending paths can be called from softirq as well as base 
+ * context. Necessary to do the irqsave/restore variants of the lock here.
+ */
 void 
 flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 		       int index, int action, struct pending_job *job)
 {
 	struct pending_job **head;
+	unsigned long flags;
 	
+	VERIFY(!in_interrupt());
+	VERIFY(spin_is_locked(&dmc->cache_sets[index / dmc->assoc].set_spin_lock));
+	spin_lock_irqsave(&dmc->cache_pending_q_spinlock, flags);
 	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
 	DPRINTK("flashcache_enq_pending: Queue to pending Q Index %d %llu",
 		index, bio->bi_sector);
@@ -158,9 +166,10 @@ flashcache_enq_pending(struct cache_c *dmc, struct bio* bio,
 	if (*head)
 		(*head)->prev = job;
 	*head = job;
+	atomic_inc(&dmc->pending_jobs_count);
+	spin_unlock_irqrestore(&dmc->cache_pending_q_spinlock, flags);
 	dmc->cache[index].nr_queued++;
 	dmc->flashcache_stats.enqueues++;
-	dmc->pending_jobs_count++;
 }
 
 /*
@@ -172,8 +181,10 @@ flashcache_deq_pending(struct cache_c *dmc, int index)
 	struct pending_job *node, *next, *movelist = NULL;
 	int moved = 0;
 	struct pending_job **head;
+	unsigned long flags;
 	
-	VERIFY(spin_is_locked(&dmc->cache_spin_lock));
+	VERIFY(!in_interrupt());
+	spin_lock_irqsave(&dmc->cache_pending_q_spinlock, flags);
 	head = &dmc->pending_job_hashbuckets[FLASHCACHE_PENDING_JOB_HASH(index)];
 	for (node = *head ; node != NULL ; node = next) {
 		next = node->next;
@@ -199,8 +210,9 @@ flashcache_deq_pending(struct cache_c *dmc, int index)
 			moved++;
 		}
 	}
-	VERIFY(dmc->pending_jobs_count >= moved);
-	dmc->pending_jobs_count -= moved;
+	VERIFY(atomic_read(&dmc->pending_jobs_count) >= moved);
+	atomic_sub(moved, &dmc->pending_jobs_count);
+	spin_unlock_irqrestore(&dmc->cache_pending_q_spinlock, flags);
 	return movelist;
 }
 
@@ -265,11 +277,12 @@ flashcache_store_checksum(struct kcached_job *job)
 {
 	u_int64_t sum;
 	unsigned long flags;
+	int set = index / dmc->assoc;
 	
 	sum = flashcache_compute_checksum(job->bio);
-	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
+	spin_lock_irqsave(&dmc->cache_sets[set].set_spin_lock, flags);
 	job->dmc->cache[job->index].checksum = sum;
-	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
+	spin_unlock_irqrestore(&dmc->cache_sets[set].set_spin_lock, flags);
 }
 
 int
@@ -278,9 +291,10 @@ flashcache_validate_checksum(struct kcached_job *job)
 	u_int64_t sum;
 	int retval;
 	unsigned long flags;
+	int set = index / dmc->assoc;
 	
 	sum = flashcache_compute_checksum(job->bio);
-	spin_lock_irqsave(&job->dmc->cache_spin_lock, flags);
+	spin_lock_irqsave(&dmc->cache_sets[set].set_spin_lock, flags);
 	if (likely(job->dmc->cache[job->index].checksum == sum)) {
 		job->dmc->flashcache_stats.checksum_valid++;		
 		retval = 0;
@@ -288,7 +302,7 @@ flashcache_validate_checksum(struct kcached_job *job)
 		job->dmc->flashcache_stats.checksum_invalid++;
 		retval = 1;
 	}
-	spin_unlock_irqrestore(&job->dmc->cache_spin_lock, flags);
+	spin_unlock_irqrestore(&dmc->cache_sets[set].set_spin_lock, flags);
 	return retval;
 }
 #endif
@@ -300,14 +314,13 @@ struct kcached_job *
 pop(struct list_head *jobs)
 {
 	struct kcached_job *job = NULL;
-	unsigned long flags;
 
-	spin_lock_irqsave(&_job_lock, flags);
+	spin_lock_irq(&_job_lock);
 	if (!list_empty(jobs)) {
 		job = list_entry(jobs->next, struct kcached_job, list);
 		list_del(&job->list);
 	}
-	spin_unlock_irqrestore(&_job_lock, flags);
+	spin_unlock_irq(&_job_lock);
 	return job;
 }
 
@@ -485,7 +498,8 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 	struct dbn_index_pair *set_dirty_list = NULL;
 	int ix, nr_set_dirty;
 	struct cacheblock *cacheblk;
-			
+
+	VERIFY(spin_is_locked(&dmc->cache_sets[set].set_spin_lock));
 	if (unlikely(*nr_writes == 0))
 		return;
 	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
@@ -722,11 +736,11 @@ flashcache_update_sync_progress(struct cache_c *dmc)
 	
 	if (dmc->flashcache_stats.cleanings % 1000)
 		return;
-	if (!dmc->nr_dirty || !dmc->size || !printk_ratelimit())
+	if (!atomic_read(&dmc->nr_dirty) || !dmc->size || !printk_ratelimit())
 		return;
-	dirty_pct = ((u_int64_t)dmc->nr_dirty * 100) / dmc->size;
+	dirty_pct = ((u_int64_t)atomic_read(&dmc->nr_dirty) * 100) / dmc->size;
 	printk(KERN_INFO "Flashcache: Cleaning %d Dirty blocks, Dirty Blocks pct %llu%%", 
-	       dmc->nr_dirty, dirty_pct);
+	       atomic_read(&dmc->nr_dirty), dirty_pct);
 	printk(KERN_INFO "\r");
 }
 

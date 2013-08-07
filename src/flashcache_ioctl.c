@@ -99,13 +99,12 @@ static void
 flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
 	struct flashcache_cachectl_pid *new;
- 	unsigned long flags;
 
 	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
 	new->expiry = jiffies + dmc->sysctl_pid_expiry_secs * HZ;
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->ioctl_lock);
 	if (which_list == FLASHCACHE_WHITELIST) {
 		if (dmc->num_whitelist_pids > dmc->sysctl_max_pids)
 			flashcache_drop_pids(dmc, which_list);
@@ -144,7 +143,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 				jiffies + ((dmc->sysctl_pid_expiry_secs + 1) * HZ);
 	} else
 		kfree(new);
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->ioctl_lock);
 	return;
 }
 
@@ -193,11 +192,9 @@ flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, int which_list)
 static void
 flashcache_del_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->ioctl_lock);
 	flashcache_del_pid_locked(dmc, pid, which_list);
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->ioctl_lock);
 }
 
 /*
@@ -207,14 +204,13 @@ void
 flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 {
 	struct flashcache_cachectl_pid *node, **tail;
-	unsigned long flags;
 	
 	if (which_list == FLASHCACHE_WHITELIST)
 		tail = &dmc->whitelist_tail;
 	else
 		tail = &dmc->blacklist_tail;
 	rcu_read_lock();
-	spin_lock_irqsave(&dmc->cache_spin_lock, flags);
+	spin_lock(&dmc->ioctl_lock);
 	node = *tail;
 	while (node != NULL) {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38))
@@ -242,7 +238,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 		flashcache_del_pid_locked(dmc, node->pid, which_list);
 		node = *tail;
 	}
-	spin_unlock_irqrestore(&dmc->cache_spin_lock, flags);
+	spin_unlock(&dmc->ioctl_lock);
 	rcu_read_unlock();
 }
 
@@ -430,18 +426,13 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
 
 	/* sysctl skip sequential threshold = 0 : disable, cache all sequential and random i/o.
 	 * This is the default. */	 
-	if (dmc->sysctl_skip_seq_thresh_kb == 0)  {
-		skip = 0;	/* Redundant, for emphasis */
-		goto out;
-	}
-
-	/* locking : We are already within cache_spin_lock so we don't
-	 * need to explicitly lock our data structures.
- 	 */
+	if (dmc->sysctl_skip_seq_thresh_kb == 0)
+		return 0;
 
 	/* Is it a continuation of recent i/o?  Try to find a match.  */
 	DPRINTK("skip_sequential_io: searching for %ld", bio->bi_sector);
 	/* search the list in LRU order so single sequential flow hits first slot */
+	spin_lock(&dmc->ioctl_lock);
 	for (seqio = dmc->seq_io_head; seqio != NULL && sequential == 0; seqio = seqio->next) { 
 
 		if (bio->bi_sector == seqio->most_recent_sector) {
@@ -486,8 +477,8 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
 		seqio->most_recent_sector = bio->bi_sector;
 		seqio->sequential_count	  = 1;
 	}
+	spin_unlock(&dmc->ioctl_lock);
 	DPRINTK("skip_sequential_io: complete.");
-out:
 	if (skip) {
 		if (bio_data_dir(bio) == READ)
 	        	dmc->flashcache_stats.uncached_sequential_reads++;
