@@ -358,7 +358,7 @@ main(int argc, char **argv)
 	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %d %lu %lu"
 		" | dmsetup create %s",
 		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
-		cache_size, associativity, md_block_size, disk_associativity,
+		cache_size, associativity, disk_associativity, md_block_size,
 		cachedev);
 
 	/* Go ahead and create the cache.

@@ -147,7 +147,7 @@ we deadlock on the cache set lock.
 #define FLASHCACHE_MAX_ASSOC	8192
 #define FLASHCACHE_MIN_DISK_ASSOC       256     /* Min Disk Assoc of 128KB in sectors */
 #define FLASHCACHE_MAX_DISK_ASSOC       2048    /* Max Disk Assoc of 1MB in sectors */
-#define FLASHCACHE_LRU_NULL	0xFFFF
+#define FLASHCACHE_NULL	0xFFFF
 
 struct cacheblock;
 
@@ -174,6 +174,9 @@ struct cache_set {
 	u_int16_t               hotlist_lru_head, hotlist_lru_tail;
 	u_int16_t               warmlist_lru_head, warmlist_lru_tail;
 	u_int16_t               lru_hot_blocks, lru_warm_blocks;
+#define NUM_BLOCK_HASH_BUCKETS		512
+	u_int16_t		hash_buckets[NUM_BLOCK_HASH_BUCKETS];
+	u_int16_t		invalid_head;
 };
 
 struct flashcache_errors {
@@ -226,6 +229,10 @@ struct flashcache_stats {
 	unsigned long lru_demotions;
 };
 
+struct diskclean_buf_ {
+	struct diskclean_buf_ *next;
+};
+
 /* 
  * Sequential block history structure - each one
  * records a 'flow' of i/o.
@@ -266,7 +273,6 @@ struct cache_c {
 	unsigned int 	block_size;	/* Cache block size */
 	unsigned int 	block_shift;	/* Cache block size in bits */
 	unsigned int 	block_mask;	/* Cache block mask */
-	unsigned int 	consecutive_shift;	/* Consecutive blocks size in bits */
 	int		md_blocks;		/* Numbers of metadata blocks, including header */
 	unsigned int disk_assoc;	/* Disk associativity */
 	unsigned int disk_assoc_shift;	/* Disk associativity in bits */
@@ -291,6 +297,7 @@ struct cache_c {
 	atomic_t	nr_dirty;
 	atomic_t 	cached_blocks;	/* Number of cached blocks */
 	atomic_t 	pending_jobs_count;
+	int		num_block_hash_buckets;
 
 	/* Stats */
 	struct flashcache_stats flashcache_stats;
@@ -326,7 +333,10 @@ struct cache_c {
 	spinlock_t	cache_pending_q_spinlock;
 #define PENDING_JOB_HASH_SIZE		32
 	struct pending_job *pending_job_hashbuckets[PENDING_JOB_HASH_SIZE];
-	
+
+	spinlock_t 		diskclean_list_lock;
+	struct diskclean_buf_ 	*diskclean_buf_head;
+
 	struct cache_c	*next_cache;
 
 	void *sysctl_handle;
@@ -462,6 +472,7 @@ struct cacheblock {
 	u_int8_t        use_cnt;
 	u_int8_t        lru_state;
 	sector_t 	dbn;	/* Sector number of the cached block */
+	u_int16_t	hash_prev, hash_next;
 #ifdef FLASHCACHE_DO_CHECKSUMS
 	u_int64_t 	checksum;
 #endif
@@ -656,6 +667,7 @@ void flashcache_lru_accessed(struct cache_c *dmc, int index);
 void flashcache_reclaim_rebalance_lru(struct cache_c *dmc, int new_lru_hot_pct);
 void flashcache_merge_writes(struct cache_c *dmc, 
 			     struct dbn_index_pair *writes_list, 
+			     struct dbn_index_pair *set_dirty_list,
 			     int *nr_writes, int set);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 int flashcache_dm_io_sync_vm(struct cache_c *dmc, struct io_region *where, 
@@ -692,6 +704,24 @@ void flashcache_module_procfs_init(void);
 void flashcache_module_procfs_releae(void);
 void flashcache_ctr_procfs(struct cache_c *dmc);
 void flashcache_dtr_procfs(struct cache_c *dmc);
+
+void flashcache_hash_init(struct cache_c *dmc);
+void flashcache_hash_destroy(struct cache_c *dmc);
+void flashcache_hash_remove(struct cache_c *dmc, int index);
+int flashcache_hash_lookup(struct cache_c *dmc, int set,
+			   sector_t dbn);
+void flashcache_hash_insert(struct cache_c *dmc, int index);
+
+void flashcache_invalid_insert(struct cache_c *dmc, int index);
+void flashcache_invalid_remove(struct cache_c *dmc, int index);
+int flashcache_invalid_get(struct cache_c *dmc, int set);
+
+int flashcache_diskclean_init(struct cache_c *dmc);
+void flashcache_diskclean_destroy(struct cache_c *dmc);
+int flashcache_diskclean_alloc(struct cache_c *dmc, 
+			       struct dbn_index_pair **buf1, struct dbn_index_pair **buf2);
+void flashcache_diskclean_free(struct cache_c *dmc, struct dbn_index_pair *buf1, 
+			       struct dbn_index_pair *buf2);
 
 #endif /* __KERNEL__ */
 

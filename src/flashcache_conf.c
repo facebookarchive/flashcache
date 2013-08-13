@@ -619,7 +619,7 @@ flashcache_writeback_load(struct cache_c *dmc)
 		DMERR("flashcache_writeback_load: Unknown version %d found in superblock!", header->cache_version);
 		return 1;
 	}
-	dmc->disk_assoc = header->assoc;
+	dmc->disk_assoc = header->disk_assoc;
 	if (header->cache_version < 3)
 		/* Disk Assoc was introduced in On SSD version 3 */
 		dmc->disk_assoc = 0;
@@ -1088,15 +1088,23 @@ init:
 		dmc->cache_sets[i].set_clean_next = i * dmc->assoc;
 		dmc->cache_sets[i].fallow_tstamp = jiffies;
 		dmc->cache_sets[i].fallow_next_cleaning = jiffies;
-		dmc->cache_sets[i].hotlist_lru_tail = FLASHCACHE_LRU_NULL;
-		dmc->cache_sets[i].hotlist_lru_head = FLASHCACHE_LRU_NULL;
-		dmc->cache_sets[i].warmlist_lru_tail = FLASHCACHE_LRU_NULL;
-		dmc->cache_sets[i].warmlist_lru_head = FLASHCACHE_LRU_NULL;
+		dmc->cache_sets[i].hotlist_lru_tail = FLASHCACHE_NULL;
+		dmc->cache_sets[i].hotlist_lru_head = FLASHCACHE_NULL;
+		dmc->cache_sets[i].warmlist_lru_tail = FLASHCACHE_NULL;
+		dmc->cache_sets[i].warmlist_lru_head = FLASHCACHE_NULL;
 		spin_lock_init(&dmc->cache_sets[i].set_spin_lock);
 	}
 	
 	atomic_set(&dmc->hot_list_pct, FLASHCACHE_LRU_HOT_PCT_DEFAULT);
 	flashcache_reclaim_init_lru_lists(dmc);
+	flashcache_hash_init(dmc);
+	if (flashcache_diskclean_init(dmc)) {
+		ti->error = "Unable to allocate memory";
+		r = -ENOMEM;
+		vfree((void *)dmc->cache);
+		vfree((void *)dmc->cache_sets);
+		goto bad3;
+	}		
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		order = (dmc->md_blocks - 1) * sizeof(struct cache_md_block_head);
@@ -1104,6 +1112,7 @@ init:
 		if (!dmc->md_blocks_buf) {
 			ti->error = "Unable to allocate memory";
 			r = -ENOMEM;
+			flashcache_diskclean_destroy(dmc);
 			vfree((void *)dmc->cache);
 			vfree((void *)dmc->cache_sets);
 			goto bad3;
@@ -1177,12 +1186,18 @@ init:
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
 
 	for (i = 0 ; i < dmc->size ; i++) {
-		if (dmc->cache[i].cache_state & VALID)
+		dmc->cache[i].hash_prev = FLASHCACHE_NULL;
+		dmc->cache[i].hash_next = FLASHCACHE_NULL;
+		if (dmc->cache[i].cache_state & VALID) {
+			flashcache_hash_insert(dmc, i);
 			atomic_inc(&dmc->cached_blocks);
+		}
 		if (dmc->cache[i].cache_state & DIRTY) {
 			dmc->cache_sets[i / dmc->assoc].nr_dirty++;
 			atomic_inc(&dmc->nr_dirty);
 		}
+		if (dmc->cache[i].cache_state & INVALID)
+			flashcache_invalid_insert(dmc, i);
 	}
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,20)
 	INIT_WORK(&dmc->delayed_clean, flashcache_clean_all_sets, dmc);
@@ -1320,7 +1335,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	       "\tvirt dev (%s), ssd dev (%s), disk dev (%s) cache mode(%s)\n"		\
 	       "\tcapacity(%luM), associativity(%u), data block size(%uK) metadata block size(%ub)\n" \
 	       "\tskip sequential thresh(%uK)\n" \
-	       "\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n" \
+	       "\ttotal blocks(%lu), cached blocks(%d), cache percent(%d)\n" \
 	       "\tdirty blocks(%d), dirty percent(%d)\n",
 	       dmc->dm_vdevname, dmc->cache_devname, dmc->disk_devname,
 	       cache_mode,
@@ -1330,7 +1345,7 @@ flashcache_dtr_stats_print(struct cache_c *dmc)
 	       dmc->sysctl_skip_seq_thresh_kb,
 	       dmc->size, atomic_read(&dmc->cached_blocks), 
 	       (int)cache_pct, atomic_read(&dmc->nr_dirty), (int)dirty_pct);
-	DMINFO("\tnr_queued(%lu)\n", atomic_read(&dmc->pending_jobs_count));
+	DMINFO("\tnr_queued(%d)\n", atomic_read(&dmc->pending_jobs_count));
 	DMINFO("Size Hist: ");
 	for (i = 1 ; i <= 32 ; i++) {
 		if (size_hist[i] > 0)
@@ -1364,7 +1379,8 @@ flashcache_dtr(struct dm_target *ti)
 		nr_queued += dmc->cache[i].nr_queued;
 	DMINFO("cache queued jobs %d", nr_queued);	
 	flashcache_dtr_stats_print(dmc);
-
+	flashcache_hash_destroy(dmc);
+	flashcache_diskclean_destroy(dmc);
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_sets);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
@@ -1542,7 +1558,7 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	       dmc->disk_assoc >> (10 - SECTOR_SHIFT));
 	DMEMIT("\tskip sequential thresh(%uK)\n",
 	       dmc->sysctl_skip_seq_thresh_kb);
-	DMEMIT("\ttotal blocks(%lu), cached blocks(%lu), cache percent(%d)\n",
+	DMEMIT("\ttotal blocks(%lu), cached blocks(%d), cache percent(%d)\n",
 	       dmc->size, atomic_read(&dmc->cached_blocks),
 	       (int)cache_pct);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {

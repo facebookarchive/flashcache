@@ -448,7 +448,7 @@ static struct flashcache_writeback_sysctl_table {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
-			.procname	= "lru_hot_pct;",
+			.procname	= "lru_hot_pct",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &flashcache_lru_hot_pct_sysctl,
@@ -614,7 +614,7 @@ static struct flashcache_writethrough_sysctl_table {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 			.ctl_name	= CTL_UNNUMBERED,
 #endif
-			.procname	= "lru_hot_pct;",
+			.procname	= "lru_hot_pct",
 			.maxlen		= sizeof(int),
 			.mode		= 0644,
 			.proc_handler	= &flashcache_lru_hot_pct_sysctl,
@@ -663,9 +663,9 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 {
 	if (strcmp(vars->procname, "io_latency_hist") == 0)
 		return &dmc->sysctl_io_latency_hist;
-	else if (strcmp(vars->procname, "do_sync") == 0) 
+	else if (strcmp(vars->procname, "do_sync") == 0)
 		return &dmc->sysctl_do_sync;
-	else if (strcmp(vars->procname, "stop_sync") == 0) 
+	else if (strcmp(vars->procname, "stop_sync") == 0)
 		return &dmc->sysctl_stop_sync;
 	else if (strcmp(vars->procname, "dirty_thresh_pct") == 0) 
 		return &dmc->sysctl_dirty_thresh;
@@ -701,9 +701,10 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_clean_on_write_miss;
 	else if (strcmp(vars->procname, "lru_promote_thresh") == 0) 
 		return &dmc->sysctl_lru_promote_thresh;
-	else if (strcmp(vars->procname, "lru_hot_pct") == 0) 
+	else if (strcmp(vars->procname, "lru_hot_pct") == 0)
 		return &dmc->sysctl_lru_hot_pct;
-	VERIFY(0);
+	printk(KERN_ERR "flashcache_find_sysctl_data: Unknown sysctl %s\n", vars->procname);
+	panic("flashcache_find_sysctl_data: Unknown sysctl %s\n", vars->procname);
 	return NULL;
 }
 
