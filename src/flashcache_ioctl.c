@@ -432,7 +432,7 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
 	/* Is it a continuation of recent i/o?  Try to find a match.  */
 	DPRINTK("skip_sequential_io: searching for %ld", bio->bi_sector);
 	/* search the list in LRU order so single sequential flow hits first slot */
-	spin_lock(&dmc->ioctl_lock);
+	VERIFY(spin_is_locked(&dmc->ioctl_lock));
 	for (seqio = dmc->seq_io_head; seqio != NULL && sequential == 0; seqio = seqio->next) { 
 
 		if (bio->bi_sector == seqio->most_recent_sector) {
@@ -477,7 +477,6 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
 		seqio->most_recent_sector = bio->bi_sector;
 		seqio->sequential_count	  = 1;
 	}
-	spin_unlock(&dmc->ioctl_lock);
 	DPRINTK("skip_sequential_io: complete.");
 	if (skip) {
 		if (bio_data_dir(bio) == READ)
