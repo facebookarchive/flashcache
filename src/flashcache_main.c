@@ -1260,7 +1260,7 @@ flashcache_clean_set(struct cache_c *dmc, int set, int force_clean_blocks)
 				cacheblk = &dmc->cache[lru_rel_index + start_index];
 				if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
 					cacheblk->cache_state |= DISKWRITEINPROG;
-					flashcache_clear_fallow(dmc, i);
+					flashcache_clear_fallow(dmc, lru_rel_index + start_index);
 					writes_list[nr_writes].dbn = cacheblk->dbn;
 					writes_list[nr_writes].index = cacheblk - &dmc->cache[0];
 					nr_writes++;
