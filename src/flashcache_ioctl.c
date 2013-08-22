@@ -99,12 +99,13 @@ static void
 flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
 	struct flashcache_cachectl_pid *new;
-
+	unsigned long flags;
+	
 	new = kmalloc(sizeof(struct flashcache_cachectl_pid), GFP_KERNEL);
 	new->pid = pid;
 	new->next = NULL;
 	new->expiry = jiffies + dmc->sysctl_pid_expiry_secs * HZ;
-	spin_lock(&dmc->ioctl_lock);
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	if (which_list == FLASHCACHE_WHITELIST) {
 		if (dmc->num_whitelist_pids > dmc->sysctl_max_pids)
 			flashcache_drop_pids(dmc, which_list);
@@ -143,7 +144,7 @@ flashcache_add_pid(struct cache_c *dmc, pid_t pid, int which_list)
 				jiffies + ((dmc->sysctl_pid_expiry_secs + 1) * HZ);
 	} else
 		kfree(new);
-	spin_unlock(&dmc->ioctl_lock);
+	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 	return;
 }
 
@@ -192,9 +193,11 @@ flashcache_del_pid_locked(struct cache_c *dmc, pid_t pid, int which_list)
 static void
 flashcache_del_pid(struct cache_c *dmc, pid_t pid, int which_list)
 {
-	spin_lock(&dmc->ioctl_lock);
+	unsigned long flags;
+	
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	flashcache_del_pid_locked(dmc, pid, which_list);
-	spin_unlock(&dmc->ioctl_lock);
+	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 }
 
 /*
@@ -204,13 +207,14 @@ void
 flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 {
 	struct flashcache_cachectl_pid *node, **tail;
+	unsigned long flags;
 	
 	if (which_list == FLASHCACHE_WHITELIST)
 		tail = &dmc->whitelist_tail;
 	else
 		tail = &dmc->blacklist_tail;
 	rcu_read_lock();
-	spin_lock(&dmc->ioctl_lock);
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	node = *tail;
 	while (node != NULL) {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,31)) || (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38))
@@ -238,7 +242,7 @@ flashcache_del_all_pids(struct cache_c *dmc, int which_list, int force)
 		flashcache_del_pid_locked(dmc, node->pid, which_list);
 		node = *tail;
 	}
-	spin_unlock(&dmc->ioctl_lock);
+	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 	rcu_read_unlock();
 }
 

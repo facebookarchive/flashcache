@@ -993,8 +993,9 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 {
 	struct cache_c *dmc = seq->private;
 	struct flashcache_cachectl_pid *pid_list;
-	
-	spin_lock(&dmc->ioctl_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	seq_printf(seq, "Blacklist: ");
 	pid_list = dmc->blacklist_head;
 	while (pid_list != NULL) {
@@ -1009,7 +1010,7 @@ flashcache_pidlists_show(struct seq_file *seq, void *v)
 		pid_list = pid_list->next;
 	}
 	seq_printf(seq, "\n");
-	spin_unlock(&dmc->ioctl_lock);
+	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 	return 0;
 }
 

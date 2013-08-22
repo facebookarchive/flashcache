@@ -1408,6 +1408,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	int res;
 	struct cacheblock *cacheblk;
 	int queued;
+	unsigned long flags;
 	
 	DPRINTK("Got a %s for %llu (%u bytes)",
 	        (bio_rw(bio) == READ ? "READ":"READA"), 
@@ -1436,7 +1437,16 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		return;
 	}
 
+	/*
+	 * Locking Note :
+	 * We are taking the ioctl_lock holding the cache set multilocks.
+	 * The ioctl lock is held for very short durations, and we do not 
+	 * (and should not) try to acquire any other locks holding the ioctl
+	 * lock.
+	 */
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	if (res == -1 || flashcache_uncacheable(dmc, bio)) {
+		spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 		/* No room , non-cacheable or sequential i/o means not wanted in cache */
 		flashcache_setlocks_multidrop(dmc, bio);
 		DPRINTK("Cache read: Block %llu(%lu):%s",
@@ -1446,7 +1456,9 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 		/* Start uncached IO */
 		flashcache_start_uncached_io(dmc, bio);
 		return;
-	}
+	} else 
+		spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
+
 	/* 
 	 * (res == INVALID) Cache Miss 
 	 * And we found cache blocks to replace
@@ -2012,6 +2024,7 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 	int sectors = to_sector(bio->bi_size);
 	int queued;
 	int uncacheable;
+	unsigned long flags;
 	
 	if (sectors <= 32)
 		size_hist[sectors]++;
@@ -2035,7 +2048,7 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 	 * at this point. Even if we are interrupted at this stage, no 
 	 * harm done.
 	 */
-	spin_lock(&dmc->ioctl_lock);
+	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	if (unlikely(dmc->sysctl_pid_do_expiry && 
 		     (dmc->whitelist_head || dmc->blacklist_head)))
 		flashcache_pid_expiry_all_locked(dmc);
@@ -2043,7 +2056,7 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 		       (to_sector(bio->bi_size) != dmc->block_size) ||
 		       (bio_data_dir(bio) == WRITE && (dmc->cache_mode == FLASHCACHE_WRITE_AROUND)) || 
 		       flashcache_uncacheable(dmc, bio));
-	spin_unlock(&dmc->ioctl_lock);
+	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 	if (uncacheable) {
 		flashcache_setlocks_multiget(dmc, bio);
 		queued = flashcache_inval_blocks(dmc, bio);

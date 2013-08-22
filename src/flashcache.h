@@ -91,6 +91,16 @@ spinlock after acquiring the cache set spinlock *must* disable irq's.
 Else, we get an irq holding the cache set lock -> other spinlock and
 we deadlock on the cache set lock.
 
+These locks are all acquired *after* acquiring the cache set spinlocks,
+which means *EVERY* acquisition of these locks must disable irq's to 
+address the above race !
+
+Every acquisition of 
+	md_block_lock
+	ioctl_lock
+	cache_pending_q_spinlock
+MUST DISABLE IRQs.
+
  */
 
 /*
