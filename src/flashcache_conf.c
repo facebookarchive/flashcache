@@ -1166,6 +1166,7 @@ init:
 	dmc->sysctl_clean_on_write_miss = 0;
 	dmc->sysctl_lru_hot_pct = 75;
 	dmc->sysctl_lru_promote_thresh = 2;
+	dmc->sysctl_new_style_write_merge = 0;
 
 	/* Sequential i/o spotting */	
 	for (i = 0; i < SEQUENTIAL_TRACKER_QUEUE_DEPTH; i++) {

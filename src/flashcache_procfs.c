@@ -232,7 +232,7 @@ flashcache_lru_hot_pct_sysctl(ctl_table *table, int write,
  * entries - zero padded at the end ! Therefore the NUM_*_SYSCTLS
  * is 1 more than then number of sysctls.
  */
-#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	21
+#define FLASHCACHE_NUM_WRITEBACK_SYSCTLS	22
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
@@ -455,6 +455,15 @@ static struct flashcache_writeback_sysctl_table {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 			.strategy	= &sysctl_intvec,
 #endif
+		},
+		{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
+			.ctl_name	= CTL_UNNUMBERED,
+#endif
+			.procname	= "new_style_write_merge",
+			.maxlen		= sizeof(int),
+			.mode		= 0644,
+			.proc_handler	= &proc_dointvec,
 		},
 	},
 	.dev = {
@@ -703,6 +712,8 @@ flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
 		return &dmc->sysctl_lru_promote_thresh;
 	else if (strcmp(vars->procname, "lru_hot_pct") == 0)
 		return &dmc->sysctl_lru_hot_pct;
+	else if (strcmp(vars->procname, "new_style_write_merge") == 0)
+		return &dmc->sysctl_new_style_write_merge;
 	printk(KERN_ERR "flashcache_find_sysctl_data: Unknown sysctl %s\n", vars->procname);
 	panic("flashcache_find_sysctl_data: Unknown sysctl %s\n", vars->procname);
 	return NULL;

@@ -384,6 +384,7 @@ struct cache_c {
 	int sysctl_clean_on_write_miss;
 	int sysctl_lru_hot_pct;
 	int sysctl_lru_promote_thresh;
+	int sysctl_new_style_write_merge;
 
 	/* Sequential I/O spotter */
 	struct sequential_io	seq_recent_ios[SEQUENTIAL_TRACKER_QUEUE_DEPTH];

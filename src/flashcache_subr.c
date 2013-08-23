@@ -59,6 +59,15 @@
 
 static DEFINE_SPINLOCK(_job_lock);
 
+static void
+flashcache_merge_writes_old(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
+			    struct dbn_index_pair *set_dirty_list,
+			    int *nr_writes, int set);
+static void
+flashcache_merge_writes_new(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
+			    struct dbn_index_pair *set_dirty_list,
+			    int *nr_writes, int set);
+
 extern mempool_t *_job_pool;
 extern mempool_t *_pending_job_pool;
 
@@ -702,6 +711,21 @@ void
 flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
 			struct dbn_index_pair *set_dirty_list,
 			int *nr_writes, int set)
+{
+	if (dmc->sysctl_new_style_write_merge)
+		flashcache_merge_writes_new(dmc, writes_list, 
+					    set_dirty_list,
+					    nr_writes, set);
+	else
+		flashcache_merge_writes_old(dmc, writes_list, 
+					    set_dirty_list,
+					    nr_writes, set);
+}
+
+static void
+flashcache_merge_writes_old(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
+			    struct dbn_index_pair *set_dirty_list,
+			    int *nr_writes, int set)
 {	
 	int start_index = set * dmc->assoc;
 	int end_index = start_index + dmc->assoc;
@@ -806,6 +830,66 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 		}
 	}
 	VERIFY((*nr_writes) == (old_writes + new_inserts));
+}
+
+static void
+flashcache_merge_writes_new(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
+			    struct dbn_index_pair *set_dirty_list,
+			    int *nr_writes, int set)
+{
+	int dirty_blocks_in = *nr_writes;
+	struct cacheblock *cacheblk;
+	int i;
+	int neighbor;
+
+	VERIFY(spin_is_locked(&dmc->cache_sets[set].set_spin_lock));
+	if (unlikely(*nr_writes == 0))
+		return;
+	/*
+	 * Loop over the blocks, searching for neighbors backwards and forwards.
+	 * When we find a neighbor, tack it onto writes_list.
+	 */
+	for (i = 0 ; i < dirty_blocks_in ; i++) {
+		/* Look behind and keep merging as long as we can */
+		neighbor = flashcache_hash_lookup(dmc, set, writes_list[i].dbn - dmc->block_size);
+		while (neighbor != -1) {
+			cacheblk = &dmc->cache[neighbor];
+			VERIFY(cacheblk->cache_state & VALID);
+			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
+				/* Found a dirty neighbor. Add it to the writes_list */
+				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, neighbor);
+				VERIFY(*nr_writes < dmc->assoc);
+				writes_list[*nr_writes].index = neighbor;
+				writes_list[*nr_writes].dbn = cacheblk->dbn;
+				(*nr_writes)++;
+				dmc->flashcache_stats.back_merge++;
+				neighbor = flashcache_hash_lookup(dmc, set, cacheblk->dbn - dmc->block_size);
+			} else
+				neighbor = -1;
+		}
+		/* Look forward and keep merging as long as we can */
+		neighbor = flashcache_hash_lookup(dmc, set, writes_list[i].dbn + dmc->block_size);
+		while (neighbor != -1) {
+			cacheblk = &dmc->cache[neighbor];
+			VERIFY(cacheblk->cache_state & VALID);
+			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
+				/* Found a dirty neighbor. Add it to the writes_list */
+				cacheblk->cache_state |= DISKWRITEINPROG;
+				flashcache_clear_fallow(dmc, neighbor);
+				VERIFY(*nr_writes < dmc->assoc);
+				writes_list[*nr_writes].index = neighbor;
+				writes_list[*nr_writes].dbn = cacheblk->dbn;
+				(*nr_writes)++;
+				dmc->flashcache_stats.front_merge++;
+				neighbor = flashcache_hash_lookup(dmc, set, cacheblk->dbn + dmc->block_size);
+			} else
+				neighbor = -1;
+		}
+	}
+	/* This may be unnecessary. But return the list of blocks to write out sorted */
+	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair), cmp_dbn, swap_dbn_index_pair);
+
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)

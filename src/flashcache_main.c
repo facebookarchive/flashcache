@@ -2043,11 +2043,6 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 	else
 		dmc->flashcache_stats.writes++;
 
-	/*
-	 * This can be a spin_lock(). We have not grabbed any other lock
-	 * at this point. Even if we are interrupted at this stage, no 
-	 * harm done.
-	 */
 	spin_lock_irqsave(&dmc->ioctl_lock, flags);
 	if (unlikely(dmc->sysctl_pid_do_expiry && 
 		     (dmc->whitelist_head || dmc->blacklist_head)))
