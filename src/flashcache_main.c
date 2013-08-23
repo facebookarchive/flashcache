@@ -2049,8 +2049,13 @@ flashcache_map(struct dm_target *ti, struct bio *bio)
 		flashcache_pid_expiry_all_locked(dmc);
 	uncacheable = (unlikely(dmc->bypass_cache) ||
 		       (to_sector(bio->bi_size) != dmc->block_size) ||
-		       (bio_data_dir(bio) == WRITE && (dmc->cache_mode == FLASHCACHE_WRITE_AROUND)) || 
-		       flashcache_uncacheable(dmc, bio));
+		       /* 
+			* If the op is a READ, we serve it out of cache whenever possible, 
+			* regardless of cacheablity 
+			*/
+		       (bio_data_dir(bio) == WRITE && 
+			((dmc->cache_mode == FLASHCACHE_WRITE_AROUND) ||
+			 flashcache_uncacheable(dmc, bio))));
 	spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 	if (uncacheable) {
 		flashcache_setlocks_multiget(dmc, bio);
