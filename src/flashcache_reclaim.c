@@ -114,9 +114,15 @@ flashcache_reclaim_rebalance_lru(struct cache_c *dmc, int new_lru_hot_pct)
 			cache_set = &dmc->cache_sets[set];
 			spin_lock_irq(&cache_set->set_spin_lock);
 			moved = 0;
-			while ((cache_set->warmlist_lru_head != FLASHCACHE_NULL) &&
+			while ((cache_set->warmlist_lru_tail != FLASHCACHE_NULL) &&
+			/*
+			In order to rebalance the warm/hot blocks, 
+			we want to move the warm block to the hot list,
+			and we give priority to the warm  block at the mru end of the warm list,
+			which is related to warmlist_lru_tail
+			*/
 			       (moved < blocks_to_move)) {
-				index = cache_set->warmlist_lru_head + start_index;
+				index = cache_set->warmlist_lru_tail + start_index;
 				flashcache_reclaim_remove_block_from_list(dmc, index);
 				cacheblk = &dmc->cache[index];
 				cacheblk->lru_state &= ~LRU_WARM;
@@ -143,7 +149,11 @@ flashcache_reclaim_rebalance_lru(struct cache_c *dmc, int new_lru_hot_pct)
 				cacheblk->lru_state &= ~LRU_HOT;
 				cacheblk->lru_state |= LRU_WARM;
 				cacheblk->use_cnt = 0;
-				flashcache_reclaim_add_block_to_list_lru(dmc,index);
+				flashcache_reclaim_add_block_to_list_mru(dmc,index);
+				/*
+				the primary hot block should be added to the mru end of the warm list,
+				not the lru end of the warm list.
+				*/
 				moved++;
 			}
 			spin_unlock_irq(&cache_set->set_spin_lock);
