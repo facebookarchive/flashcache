@@ -1433,6 +1433,13 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	if (queued) {
 		if (unlikely(queued < 0))
 			flashcache_bio_endio(bio, -EIO, dmc, NULL);
+		if ((res > 0) && 
+		    (dmc->cache[index].cache_state == INVALID))
+			/* 
+			 * If happened to pick up an INVALID block, put it back on the 
+			 * per cache-set invalid list
+			 */
+			flashcache_invalid_insert(dmc, index);
 		flashcache_setlocks_multidrop(dmc, bio);
 		return;
 	}
@@ -1448,6 +1455,13 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	if (res == -1 || flashcache_uncacheable(dmc, bio)) {
 		spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 		/* No room , non-cacheable or sequential i/o means not wanted in cache */
+		if ((res > 0) && 
+		    (dmc->cache[index].cache_state == INVALID))
+			/* 
+			 * If happened to pick up an INVALID block, put it back on the 
+			 * per cache-set invalid list
+			 */
+			flashcache_invalid_insert(dmc, index);
 		flashcache_setlocks_multidrop(dmc, bio);
 		DPRINTK("Cache read: Block %llu(%lu):%s",
 			bio->bi_sector, bio->bi_size, "CACHE MISS & NO ROOM");
@@ -1792,6 +1806,12 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 	cacheblk = &dmc->cache[index];
 	queued = flashcache_inval_blocks(dmc, bio);
 	if (queued) {
+		if (cacheblk->cache_state == INVALID)
+			/* 
+			 * If happened to pick up an INVALID block, put it back on the 
+			 * per cache-set invalid list
+			 */
+			flashcache_invalid_insert(dmc, index);
 		flashcache_setlocks_multidrop(dmc, bio);
 		if (unlikely(queued < 0))
 			flashcache_bio_endio(bio, -EIO, dmc, NULL);
