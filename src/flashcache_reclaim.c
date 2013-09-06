@@ -402,7 +402,7 @@ flashcache_reclaim_demote_block(struct cache_c *dmc, int index)
 	int start_index = set * dmc->assoc;
 
 	VERIFY(cacheblk->lru_state & LRU_HOT);
-	warm_block = cache_set->warmlist_lru_head;
+	warm_block = cache_set->warmlist_lru_tail;
 	if (warm_block == FLASHCACHE_NULL)
 		/* We cannot swap this block into the warm list */
 		return 0;
