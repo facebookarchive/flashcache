@@ -1,0 +1,20 @@
+Vadim T (Percona) wrote an initial guide on getting flashcache building on CentOS, which was extremely helpful.
+
+Based on that, I've modified the Makefiles to make building on CentOS as easy as possible. Here's the steps you'll
+need to follow to build on CentOS:
+
+ - Make sure you have the CentOS EPEL repo. (http://fedoraproject.org/wiki/EPEL)
+ - Make sure you have the CentOS source repo. (http://mirror.centos.org/centos/$releasever/updates/SRPMS/)
+ - Install prerequisite build packages:
+   yum install dkms gcc make yum-utils kernel-devel
+ - CentOS kernel-headers/devel packages don't include internal headers, we've got to configure the full source:
+   yumdownloader --source kernel-`uname -r`
+   sudo rpm -ivh kernel-`uname -r`.src.rpm
+ - For CentOS6.x boot support:
+   yum localinstall utils/dracut-flashcache-0.3-1.el6.noarch.rpm
+   follow the instructions in doc/dracut-flashcache.txt later on if you want flashcache to accelerate your root device or lvm volumes
+   skip the "Boot from Flashcache" part in README-DKMS
+
+Now the updated Makefiles should work correctly.
+
+Graeme Humphries <graeme@sudo.ca>

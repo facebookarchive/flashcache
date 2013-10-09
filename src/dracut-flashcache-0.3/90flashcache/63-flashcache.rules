@@ -1,0 +1,12 @@
+# Written by  John Newbigin <jnewbigin@chrysocome.net>
+# Based on 64-lvm.rules
+# We want these rules to run before LVM so we can
+# Intercerpt pv if necessary (at least I think so)
+
+
+SUBSYSTEM!="block", GOTO="fc_end"
+ACTION!="add|change", GOTO="fc_end"
+
+RUN+="/sbin/initqueue --settled --onetime --unique /sbin/fc_scan"
+
+LABEL="fc_end"

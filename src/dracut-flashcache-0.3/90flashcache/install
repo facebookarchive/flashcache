@@ -1,0 +1,10 @@
+inst flashcache
+
+dracut_install /sbin/flashcache_create
+dracut_install /sbin/flashcache_load
+dracut_install /sbin/flashcache_destroy
+inst "$moddir/fc_scan" "/sbin/fc_scan"
+
+inst_hook cmdline 29 "$moddir/parse-flashcache.sh"
+inst_rules "$moddir/63-flashcache.rules" 63-flashcache.rules
+

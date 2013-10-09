@@ -1,0 +1,241 @@
+dracut-flashcache version 0.3
+=============================
+This is a dracut module which will enable you to use flashcache on your root (/) filesystem
+or LVM PV.
+
+Written by John Newbigin <jnewbigin@chrysocome.net>
+
+
+It has been written and tested on CentOS-6 and should work the same on RHEL6.
+
+It will probably work on Fedora but they might have changed things.
+
+WARNING
+=======
+A mistake here could delete all your data. Be careful!
+
+Preparation
+===========
+You don't actually need a Solid State Drive (SSD), any disk will work. These instructions
+will use the term SSD to represent your selected 'cache' disk. Start by physically
+installing your disk and make sure it is detected (in /proc/partitions).
+
+Do a backup of your system. If you accidently get the SSD and the HDD round the wrong way
+all your data could go in a flash (no pun intended).
+
+You will need the following RPM packages installed
+* kmod-flashcache from ELRepo - This is the actual 'driver' http://elrepo.org/tiki/kmod-flashcache
+* flashcache-utils from ELRepo - These are tools required to 'start the driver' http://elrepo.org/tiki/flashcache-utils
+* dracut-flashcache (this package) - This will use the flashcache-utils during boot http://www.chrysocome.net/download
+
+Planning
+========
+1. Choose where to store your cache.
+I chose to partition my SSD. This is not necessary but I want to use it to cache two separate LVM groups so I need two partitions.
+
+I use partition type '0xda  Non-FS data' but there is no standard and it does not really matter.
+
+2. Choose what to store in your cache.
+If you are not using LVM then you probably want to cache an entire partition (or disk? TODO: can a flashcache device have partitions?).
+Chances are for a simple setup it is /dev/sda2
+
+If you are using LVM then you can choose to cache a Physical Volume or Logical Volume. 
+
+If you only have one PV then that is a handy thing to cache because your filesystem device names will be the same so you have less configuration to do.
+
+If you have multiple PV then you can cache one LV instead. This will speed up all of your PV at the same time. Your filesystem device will change which might mean more work.
+
+If you have multiple PV and multiple LV or just want to have multiple caches, not to worry, just partition your SSD and set them up one at a time.
+
+Setup
+=====
+1. Edit /etc/lvm/lvm.conf and blacklist your SSD with a command like this:
+ filter = [ "r|/dev/sdb|" ]
+# This will prevent LVM from seeing the signature at the start of the device and thinking it should scan this device (this is a bad thing)
+# We are relying on the regex to match all partitions on the disk as well as the disk
+# (Do not include the "a/.*/" in your filter or your r will not be processed)
+
+2. Build a new initd which will contain your updated lvm.conf
+mkinitrd -f /boot/initramfs-$(uname -r).img $(uname -r)
+
+3. Edit your grub.conf and add this to the kernel line:
+rd_FLASHCACHE=/dev/HDD:/dev/SSD:fc_HDD
+
+4. In grub.conf, if you have root=/dev/HDD then change it so that
+ root=/dev/mapper/fc_HDD
+
+Reboot!
+
+Once you boot up successfuly, it will still take some time for your recent disk access to fill the cache. Don't expect instant results.
+
+Advanced Setup
+==============
+Once you have writethru caching working you can try writeback by editing grub.conf to have
+rd_FLASHCACHE=/dev/HDD:/dev/SSD:fc_HDD:back
+
+This will keep your cache over a reboot. This gives faster boot times but has some risks associated with it.
+
+Uninstalling
+============
+If you set up a writeback cache and you then want to remove it, you can safly do this by editing grub.conf and setting it to type none. After a reboot it will be gone and then you can edit grub.conf and remove the rd_FLASHCACHE= option totally.
+
+Examples
+========
+Using basic LVM and want to cache your PV
+root=/dev/mapper/vg0-lv_root rd_FLASHCACHE=/dev/sda2:/dev/sdb:fc_sda2
+
+Using basic LVM and want to cache your root LV only:
+root=/dev/mapper/fc_root rd_FLASHCACHE=/dev/mapper/vg0-lv_root:dev/sdb:fc_root
+
+Using software RAID and want to cache the raid dev:
+rd_FLASHCACHE=/dev/md0:/dev/sdb:fc_md0
+
+Notes
+=====
+I don't think we need to lvm blacklist the real disk. Once the flashcache is loaded, lvm won't be able to use the
+device. This allows a fall-back in the case that the flashcache does not load. Only if you have a dirty writeback
+cache will this be a problem... (and it could be a BIG problem, particularly if you flush the cache in the future after you have done an fsck on the real disk device!)
+
+My examples use fc_... as the cache name. I think this helps to remember where the data is coming from. The actual string you use is up to you.
+
+Writeback mode does not have any on disk header/signature so there is no safety if you make a mistake with your device names. Be careful.
+
+What if you want flashcache for a disk which is not needed at boot time? Should we have a config file
+or should there be a run time udev rule to read the command line?
+
+For now, specify them all in grub.conf and the runtime udev rule will process them once your disk subsystem is ready so you can use software RAID etc.
+
+
+    dracut-flashcache
+    Copyright (C) 2012 John Newbigin <jnewbigin@chrysocome.net>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License version 2 as 
+    published by the Free Software Foundation.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+== Old Notes==
+dracut module for flashcache
+Written by John Newbigin jnewbigin@chrysocome.net
+
+This will enable you to use the elrepo packaged flashcache module
+with your root filesystem and/or physical volumes.
+
+Step : Install the required software
+yum install flashcache-utils kmod-flashcache dracut-flashcache
+
+Step : Blacklist your SSD
+To prevent LVM from getting confused you should configure it so that it never
+tries to find physical volumes on your ssd disk or partitions (depending on your setup).
+
+To do this, edit /etc/lvm/lvm.conf and change your 'filter =' entry.
+My ssd is /dev/sdd so my filter looks like this:
+filter = [ "r|/dev/sdd|" ]
+
+I could also do this:
+filter = [ "r|$/dev/sdd1^|", "r|$/dev/sdd2^|" ]
+If I wanted to be more specific.
+
+(Do not include the "a/.*/" or your r will not be processed)
+I don't think we need to blacklist the real disk. Once the flashcache is loaded, lvm won't be able to use the
+device. This allows a fallback in the case that the flashcache does not load. Only if you have a dirty writeback
+cache will this be a problem.....
+
+Step : Build a new initrd
+We need to get the flashcache files and your new lvm config into the initrd
+mkinitrd -f /boot/initramfs-$(uname -r).img $(uname -r)
+
+Step : Edit grub.conf
+You can of course do this from grub but it is much easier to do with a text editor.
+Add this to the end of your kernel line:
+rd_FLASHCACHE=/dev/my_real_disk:/dev/my_ssd:fc_new_name
+
+You must substitute the correct values for my_real_disk, my_ssd and fc_new_name
+my_real_disk is where you store your data. It might be a disk or partition or a logical volume. eg: /dev/sda2 (partition)
+my_ssd is your high speed disk (probably an ssd). eg: /dev/sdb1 (a partition)
+fc_new_name is the name used to access the cached device. I recommend fc_ followed by the original name. eg: fc_sda2 (don't use /dev here)
+
+Note: it is possible for disk names to change so it might be safer to use a unique name for your devices, something from /dev/disk/by-id/
+Unfortunatly I use : as the seperator so you can't use /dev/disk/by-path/
+
+There is also an optional 4th parameter which I will cover below.
+
+Step : Reboot
+
+Using write back
+================
+The default mode is writethrough (or thru) which will ensure that your data is safely stored on your real disk.
+This is the safest option because if you have a crash/powerfail, ssd fail or boot problem your data is safe.
+
+For better write performance and read performance from boot, you can enable writeback mode. This is relativly safe. 
+The problem is if you crash or powerfail
+and then have an ssd fail or boot problem then you can loose data. This may just cause a loss of recent changes but
+it could also cause filesystem corruption and a total loss of everything.
+
+(What would happen if: boot with writeback. crash. Boot without any flashcache & repair filesystem (say you accidentially boot into a live CD).
+Then reboot and re-activate your dirty writeback. Stale data is now written onto your disk causing
+fresh corruption).
+
+Don't enable this until you know that:
+- You can boot/reboot succssfully with write thru
+- You have a UPS
+- You have backups of your data
+
+To enable writeback mode, add :back to the end of your rd_FLASHCACHE settings.
+You can change this in the future and revert to thru but you must do a clean reboot to correctly remove
+the writeback cache so you don't loose data.
+
+ie.i To remove a writeback cache:
+* Boot with :back
+* Do a clean shut down
+* Boot with :thru
+* shut down
+* Boot with no rd_FLASHCACHE
+
+Finally, if you enable fast_remove, every reboot may (will?) leave data in the cache only so you must
+reboot in order to save your valuable data. In this configuration you can't change the type to thru or
+you loose your data. First, disable fast_remove, then reboot, then reboot again and remove the writeback
+cache.
+
+
+HDD SSD MODE ACTION
+ x   x   -   thru
+ x   x  new  thru
+ x   x   -   back
+ x   x  new  back
+ x   x   -   auto
+ x   x  new  auto
+ x   x   -   none
+ x   x  back back
+auto x  back back
+ x   x  back thru
+ x   x  back auto
+auto x  back auto
+ x   x  back none
+ x   x  new  thru
+ x   x  new  back
+ x   x  new  auto
+ x   x  new  none
+
+flashcache_init /dev/ssd
+Write a header to the SSD to identify it as a candidate for use at create time.
+
+flashcache_info /dev/xxx
+Query the dev:
+- N/A
+- Clean
+- Dirty
+- Fastclean?
+- Unstable?
+- New
+
+
+
