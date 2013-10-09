@@ -1,0 +1,11 @@
+# Written by  John Newbigin <jnewbigin@chrysocome.net>
+# We want these rules to run before LVM so we can
+# Intercerpt pv if necessary (at least I think so)
+
+
+SUBSYSTEM!="block", GOTO="fc_end"
+ACTION!="add|change", GOTO="fc_end"
+
+RUN+="/sbin/fc_scan $env{DEVNAME}"
+
+LABEL="fc_end"
