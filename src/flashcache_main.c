@@ -76,7 +76,7 @@
  * cache read miss.
  */
 
-#define FLASHCACHE_SW_VERSION "flashcache-2.0"
+#define FLASHCACHE_SW_VERSION "flashcache-3.1.1"
 char *flashcache_sw_version = FLASHCACHE_SW_VERSION;
 
 static void flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
