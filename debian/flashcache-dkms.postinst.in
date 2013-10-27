@@ -1,0 +1,25 @@
+#!/bin/sh
+
+set -e
+
+NAME=flashcache
+VERSION=%VERSION
+
+case "$1" in
+	configure)
+		dkms build -m $NAME -v $VERSION
+		dkms install -m $NAME -v $VERSION
+	;;
+
+	abort-upgrade|abort-remove|abort-deconfigure)
+	;;
+
+	*)
+		echo "postinst called with unknown argument \`$1'" >&2
+		exit 1
+	;;
+esac
+
+#DEBHELPER#
+
+exit 0

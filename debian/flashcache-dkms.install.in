@@ -1,0 +1,4 @@
+src/dkms.conf		var/lib/dkms/flashcache/%VERSION/source
+src/Makefile		var/lib/dkms/flashcache/%VERSION/source
+src/*.h			var/lib/dkms/flashcache/%VERSION/source
+src/*.c			var/lib/dkms/flashcache/%VERSION/source

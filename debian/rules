@@ -1,0 +1,87 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+DEB_NAME=flashcache
+NAME=flashcache
+VERSION=$(shell dpkg-parsechangelog | grep Version | cut -d\  -f2)
+# COMMIT_REV is imprinted into various tools and the module.
+COMMIT_REV=$(shell dpkg-parsechangelog | grep Version | cut -d\  -f2 | cut -d- -f1-3)
+export COMMIT_REV
+
+build: build-stamp
+
+build-stamp:
+	dh_testdir
+	$(MAKE) -C src/utils all
+	touch $@
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp configure-stamp
+	-$(MAKE) -C src/utils clean
+	#-$(MAKE) clean
+	$(RM) debian/flashcache-dkms.install
+	$(RM) debian/flashcache-dkms.dirs
+	$(RM) debian/flashcache-dkms.prerm
+	$(RM) debian/flashcache-dkms.postinst
+	$(RM) src/dkms.conf
+	dh_clean
+
+debian/flashcache-dkms.install:	debian/flashcache-dkms.install.in
+	sed -e 's/%VERSION/$(VERSION)/g' <$< >$@
+
+debian/flashcache-dkms.dirs:	debian/flashcache-dkms.dirs.in
+	sed -e 's/%VERSION/$(VERSION)/g' <$< >$@
+
+src/dkms.conf:	debian/dkms.conf.in
+	sed -e 's/%VERSION/$(VERSION)/g' -e 's/%COMMIT_REV/$(COMMIT_REV)/g' <$< >$@
+
+install: build debian/flashcache-dkms.install debian/flashcache-dkms.dirs src/dkms.conf
+	dh_testdir
+	dh_testroot
+	dh_prep
+	dh_installdirs
+	dh_install
+	install -m 755 -o root -g root src/flashcache.hook $(CURDIR)/debian/flashcache-utils/etc/initramfs-tools/hooks/flashcache
+	dh_installdocs
+	dh_installchangelogs
+	#$(MAKE) DESTDIR=$(CURDIR)/debian/$(DEB_NAME)-dkms NAME=$(NAME) VERSION=$(VERSION) install
+
+binary-arch: build install
+	dh_testdir
+	dh_testroot
+	dh_link
+	dh_strip
+	dh_compress
+	dh_fixperms
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+debian/flashcache-dkms.prerm:	debian/flashcache-dkms.prerm.in
+	sed -e 's/%VERSION/$(VERSION)/g' <$< >$@
+
+debian/flashcache-dkms.postinst:	debian/flashcache-dkms.postinst.in
+	sed -e 's/%VERSION/$(VERSION)/g' <$< >$@
+
+binary-indep: build install debian/flashcache-dkms.prerm debian/flashcache-dkms.postinst
+	dh_testdir
+	dh_testroot
+	dh_link
+	dh_strip
+	dh_compress
+	dh_fixperms
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary install configure

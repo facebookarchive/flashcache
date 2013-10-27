@@ -1,0 +1,29 @@
+Source: flashcache
+Section: misc
+Priority: extra
+Maintainer: Chris Collins <chrisc@vrlaw.com.au>
+Build-Depends: debhelper (>= 7), dkms
+Standards-Version: 3.8.1
+
+Package: flashcache-utils
+Architecture: any
+Suggests: flashcache-dkms
+Depends: ${misc:Depends}
+Description: Utilities and hooks required to use flashcache
+ The flashcache SSD cache requires a number of utilities
+ to be usable.  These utilities are included in this package.
+ .
+ You still require the flashcache-dkms to get the kernel module
+ required to use flashcache.
+
+Package: flashcache-dkms
+Architecture: all
+Depends: dkms (>= 1.95), ${misc:Depends}
+Description: SSD Block Device Cache - DKMS module
+ flashcache provides a caching layer for traditional disks
+ on top of a Solid State Disk (SSD), the idea being that
+ you can use a small SSD to accelerate a larger, cheaper,
+ conventional drives.
+ .
+ This package contains the module source and configuration
+ for DKMS.
