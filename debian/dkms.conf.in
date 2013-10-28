@@ -1,0 +1,7 @@
+BUILT_MODULE_NAME=flashcache
+DEST_MODULE_LOCATION=/kernel/drivers/block
+PACKAGE_NAME=flashcache
+PACKAGE_VERSION="%VERSION"
+AUTOINSTALL=yes
+REMAKE_INITRD=yes
+MAKE="KERNEL_TREE=$kernel_source_dir COMMIT_REV=%COMMIT_REV make modules"

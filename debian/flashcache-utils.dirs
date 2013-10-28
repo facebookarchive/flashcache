@@ -1,0 +1,5 @@
+/etc/initramfs-tools/hooks
+/etc/initramfs-tools/scripts/init-premount
+/usr/lib/flashcache-utils
+/usr/sbin
+/sbin

@@ -1,0 +1,8 @@
+Here's the steps you'll need to build packages on Ubuntu:
+
+ - Install prerequisite build packages:
+   apt-get install devscripts
+ - Build the packages:
+   dpkg-buildpackage -rfakeroot -b
+ - Install the packages
+   cd ../ && dpkg -i flashcache*.deb

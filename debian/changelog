@@ -1,0 +1,33 @@
+flashcache (3.1.1-156-g5e5f71ed7cdc-1ubuntu1) unstable; urgency=low
+
+  * Updated to newest version of flashcache
+
+ -- Troels Liebe Bentsen <troels@it-kartellet.dk>  Sun, 27 Oct 2013 14:26:46 +0100
+
+flashcache (1.0-156-g5e5f71ed7cdc-1) unstable; urgency=low
+
+  * Fix version number.
+  * Fix build process to imprint version number correctly.
+
+ -- Chris Collins <chrisc@vrlaw.com.au>  Tue, 18 Sep 2012 16:32:15 +1000
+
+flashcache (1.0-156-g5e5f71e-3) unstable; urgency=low
+
+  * Fix various postinst problems with dkms.
+
+ -- Chris Collins <chrisc@vrlaw.com.au>  Tue, 18 Sep 2012 16:08:03 +1000
+
+flashcache (1.0-156-g5e5f71e-2) unstable; urgency=low
+
+  * Fix missing copyright file
+  * Include packaging release number in DKMS versions. 
+  * Remove superfluous configure target from rules.
+
+ -- Chris Collins <chrisc@vrlaw.com.au>  Tue, 18 Sep 2012 10:43:46 +1000
+
+flashcache (1.0-156-g5e5f71e-1) unstable; urgency=low
+
+  * Packaged from upstream sources on github.com
+
+ -- Chris Collins <chrisc@vrlaw.com.au>  Mon, 17 Sep 2012 16:53:20 +1000
+
