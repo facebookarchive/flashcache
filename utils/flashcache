@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# flashcache	Init Script to manage cachedev loads
+# flashcache    Init Script to manage cachedev loads
 #
 # chkconfig: 345 9 98
 # description: Flashcache Management
@@ -13,6 +13,7 @@ BACKEND_DISK=
 CACHEDEV_NAME=
 MOUNTPOINT=
 FLASHCACHE_NAME=
+CACHE_MODE= # back|around|thru
 
 # Just a check, to validate the above params are set
 [ -z "$SSD_DISK" ] && exit 10
@@ -20,6 +21,7 @@ FLASHCACHE_NAME=
 [ -z "$CACHEDEV_NAME" ] && exit 12
 [ -z "$MOUNTPOINT" ] && exit 13
 [ -z "$FLASHCACHE_NAME" ] && exit 14
+[ -z "$CACHE_MODE" ] && exit 15
 
 # Source function library.
 . /etc/rc.d/init.d/functions
@@ -27,7 +29,8 @@ FLASHCACHE_NAME=
 #globals
 DMSETUP=`/usr/bin/which dmsetup`
 SERVICE=flashcache
-FLASHCACHE_LOAD=/sbin/flashcache_load
+FLASHCACHE_LOAD=`/usr/bin/which flashcache_load`
+FLASHCACHE_CREATE=`/usr/bin/which flashcache_create`
 SUBSYS_LOCK=/var/lock/subsys/$SERVICE
 
 RETVAL=0
@@ -38,41 +41,72 @@ start() {
     /sbin/modprobe flashcache
     RETVAL=$?
     if [ $RETVAL -ne 0 ]; then
-	echo "Module Load Error: flashcache. Exited with status - $RETVAL"
-	exit $RETVAL
+        echo "Module Load Error: flashcache. Exited with status - $RETVAL"
+        exit $RETVAL
     fi
-    #flashcache_load the cachedev
-    $FLASHCACHE_LOAD $SSD_DISK $CACHEDEV_NAME
-    RETVAL=$?
-    if [ $RETVAL -ne 0 ]; then
-	echo "Failed: flashcache_load $SSD_DISK $CACHEDEV_NAME"
-	exit $RETVAL;
+    # Could clean this up with a case statement
+    if [[ $CACHE_MODE == "back" ]]; then
+        #flashcache_load the cachedev
+        $FLASHCACHE_LOAD $SSD_DISK $CACHEDEV_NAME
+        RETVAL=$?
+        if [ $RETVAL -ne 0 ]; then
+        echo "Failed: flashcache_load $SSD_DISK $CACHEDEV_NAME"
+        exit $RETVAL;
+        fi
+    elif [[ $CACHE_MODE == "thru" || $CACHE_MODE == "around" ]]; then
+        # use flashcache_create, no persistence on these modes
+        $FLASHCACHE_CREATE -p $CACHE_MODE $CACHEDEV_NAME $SSD_DISK $BACKEND_DISK
+        RETVAL=$?
+        if [ $RETVAL -ne 0 ]; then
+            echo "Failed: flashcache_create -p $CACHE_MODE $CACHEDEV_NAME $SSD_DISK $BACKEND_DISK"
+            exit $RETVAL;
+        fi
+    else
+        echo "Invalid cache mode: $CACHE_MODE."
+        exit 1
     fi
     #mount
     if [ -L /dev/mapper/$CACHEDEV_NAME ]; then
-	/bin/mount /dev/mapper/$CACHEDEV_NAME $MOUNTPOINT
-	RETVAL=$?
-	if [ $RETVAL -ne 0 ]; then
-	    echo "Mount Failed: /dev/mapper/$CACHEDEV_NAME to $MOUNTPOINT"
-	    exit $RETVAL
-	fi
+        /bin/mount /dev/mapper/$CACHEDEV_NAME $MOUNTPOINT
+        RETVAL=$?
+        if [ $RETVAL -ne 0 ]; then
+            echo "Mount Failed: /dev/mapper/$CACHEDEV_NAME to $MOUNTPOINT"
+            exit $RETVAL
+        fi
     else
-	echo "Not Found: /dev/mapper/$CACHEDEV_NAME"
-	exit 1
+        echo "Not Found: /dev/mapper/$CACHEDEV_NAME"
+        exit 1
     fi
     #lock subsys
     touch $SUBSYS_LOCK
 }
 
 stop() {
+    echo "Stopping Flashcache..."
     #unmount
     /bin/umount $MOUNTPOINT
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        echo "Failed to unmount $MOUNTPOINT"
+        exit 1
+    fi
+
     #check for force flag
-    FLAG=0
-    [ "$1" == '--force' ] && FLAG=1
-    /sbin/sysctl -w dev.flashcache.$FLASHCACHE_NAME.fast_remove=$FLAG
-    echo "Flushing flashcache: Flushes to $BACKEND_DISK"
+    if [[ $CACHE_MODE == "back" ]]; then
+        # Only writeback has fast_remove / needs this
+        FLAG=0
+        [ "$1" == '--force' ] && FLAG=1
+        /sbin/sysctl -w dev.flashcache.$FLASHCACHE_NAME.fast_remove=$FLAG
+        echo "Flushing flashcache: Flushes to $BACKEND_DISK"
+    fi
     $DMSETUP remove $CACHEDEV_NAME
+
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        echo "Failed to remove device!"
+        exit 1
+    fi
+
     #unlock subsys
     rm -f $SUBSYS_LOCK
 }
@@ -85,20 +119,20 @@ status() {
 
 case $1 in
     start)
-	start
-	;;
+        start
+        ;;
     stop)
-	stop
-	;;
+        stop
+        ;;
     status)
-	status
-	;;
+        status
+        ;;
     forcestop)
-	stop --force
-	;;
+        stop --force
+        ;;
     *)
-	echo "Usage: $0 {start|stop|status}"
-	exit 1
+        echo "Usage: $0 {start|stop|status}"
+        exit 1
 esac
 
 exit 0
