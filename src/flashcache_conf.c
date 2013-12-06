@@ -1746,12 +1746,12 @@ flashcache_init(void)
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 	r = kcopyd_client_create(FLASHCACHE_COPY_PAGES, &flashcache_kcp_client);
-#elif ((LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1538))
+#elif ((LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,9,0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1538) && (RHEL_RELEASE_CODE <= 1540))
 	flashcache_kcp_client = dm_kcopyd_client_create();
 	if ((r = IS_ERR(flashcache_kcp_client))) {
 		r = PTR_ERR(flashcache_kcp_client);
 	}
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0))
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1541))
        flashcache_kcp_client = dm_kcopyd_client_create(NULL);
        if ((r = IS_ERR(flashcache_kcp_client))) {
                r = PTR_ERR(flashcache_kcp_client);
