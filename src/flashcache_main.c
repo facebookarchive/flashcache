@@ -103,22 +103,48 @@ extern struct kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing
 extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
-int dm_io_async_bvec(unsigned int num_regions, 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-			    struct dm_io_region *where, 
-#else
-			    struct io_region *where, 
-#endif
-			    int rw, 
-			    struct bio_vec *bvec, io_notify_fn fn, 
-			    void *context)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
+int dm_io_async_bvec_pl(unsigned int num_regions, 
+			struct dm_io_region *where, 
+			int rw, 
+			struct page_list *pl, 
+			io_notify_fn fn, 
+			void *context)
 {
 	struct dm_io_request iorq;
 
 	iorq.bi_rw = rw;
+	iorq.mem.type = DM_IO_PAGE_LIST;
+	iorq.mem.ptr.pl = pl;
+	iorq.notify.fn = fn;
+	iorq.notify.context = context;
+	iorq.client = flashcache_io_client;
+	return dm_io(&iorq, num_regions, where, NULL);
+}
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
+int dm_io_async_bvec(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+		     struct dm_io_region *where, 
+#else
+		     struct io_region *where, 
+#endif
+		     int rw, 
+		     struct bio *bio, 
+		     io_notify_fn fn, 
+		     void *context)
+{
+	struct dm_io_request iorq;
+
+	iorq.bi_rw = rw;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
+	iorq.mem.type = DM_IO_BIO;
+	iorq.mem.ptr.bio = bio;	
+#else
 	iorq.mem.type = DM_IO_BVEC;
-	iorq.mem.ptr.bvec = bvec;
+	iorq.mem.ptr.bvec = bio->bi_io_vec + bio->bi_idx;
+#endif
 	iorq.notify.fn = fn;
 	iorq.notify.context = context;
 	iorq.client = flashcache_io_client;
@@ -542,7 +568,7 @@ flashcache_do_io(struct kcached_job *job)
 #endif
 	/* Write to cache device */
 	job->dmc->flashcache_stats.ssd_writes++;
-	r = dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, bio->bi_io_vec + bio->bi_idx,
+	r = dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, bio,
 			     flashcache_io_callback, job);
 	VERIFY(r == 0);
 	/* In our case, dm_io_async_bvec() must always return 0 */
@@ -704,22 +730,21 @@ flashcache_alloc_md_sector(struct kcached_job *job)
 			page = virt_to_page(addr);
 	} else
 		dmc->sysctl_error_inject &= ~MD_ALLOC_SECTOR_ERROR;
-	job->md_io_bvec.bv_page = page;
 	if (unlikely(page == NULL)) {
 		job->dmc->flashcache_errors.memory_alloc_errors++;
 		return -ENOMEM;
 	}
-	job->md_io_bvec.bv_len = MD_BLOCK_BYTES(job->dmc);
-	job->md_io_bvec.bv_offset = 0;
-	job->md_block = (struct flash_cacheblock *)page_address(page);
+	job->pl_base[0].page = page;
+	job->pl_base[0].next = NULL;	
 	return 0;
 }
 
 static void
 flashcache_free_md_sector(struct kcached_job *job)
 {
-	if (job->md_io_bvec.bv_page != NULL)
-		__free_pages(job->md_io_bvec.bv_page, get_order(MD_BLOCK_BYTES(job->dmc)));
+	if (job->pl_base[0].page != NULL)
+		__free_pages(job->pl_base[0].page, get_order(MD_BLOCK_BYTES(job->dmc)));
+	job->pl_base[0].page = NULL;
 }
 
 void
@@ -795,9 +820,9 @@ flashcache_md_write_kickoff(struct kcached_job *job)
 	where.sector = (1 + INDEX_TO_MD_BLOCK(dmc, orig_job->index)) * MD_SECTORS_PER_BLOCK(dmc);
 	dmc->flashcache_stats.ssd_writes++;
 	dmc->flashcache_stats.md_ssd_writes++;
-	dm_io_async_bvec(1, &where, WRITE,
-			 &orig_job->md_io_bvec,
-			 flashcache_md_write_callback, orig_job);
+	dm_io_async_bvec_pl(1, &where, WRITE,
+			    &orig_job->pl_base[0],
+			    flashcache_md_write_callback, orig_job);
 }
 
 void
@@ -1335,7 +1360,7 @@ flashcache_read_hit(struct cache_c *dmc, struct bio* bio, int index)
 			atomic_inc(&dmc->nr_jobs);
 			dmc->flashcache_stats.ssd_reads++;
 			dm_io_async_bvec(1, &job->job_io_regions.cache, READ,
-					 bio->bi_io_vec + bio->bi_idx,
+					 bio,
 					 flashcache_io_callback, job);
 		}
 	} else {
@@ -1394,7 +1419,7 @@ flashcache_read_miss(struct cache_c *dmc, struct bio* bio,
 		atomic_inc(&dmc->nr_jobs);
 		dmc->flashcache_stats.disk_reads++;
 		dm_io_async_bvec(1, &job->job_io_regions.disk, READ,
-				 bio->bi_io_vec + bio->bi_idx,
+				 bio,
 				 flashcache_io_callback, job);
 		flashcache_clean_set(dmc, set,
 				     dmc->sysctl_clean_on_read_miss);
@@ -1863,7 +1888,7 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 		if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 			/* Write data to the cache */		
 			dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
-					 bio->bi_io_vec + bio->bi_idx,
+					 bio,
 					 flashcache_io_callback, job);
 		} else {
 			VERIFY(dmc->cache_mode == FLASHCACHE_WRITE_THROUGH);
@@ -1875,7 +1900,7 @@ flashcache_write_miss(struct cache_c *dmc, struct bio *bio, int index)
 					 (struct dm_io_region *)&job->job_io_regions, 
 #endif
 					 WRITE, 
-					 bio->bi_io_vec + bio->bi_idx,
+					 bio,
 					 flashcache_io_callback, job);
 		}
 		flashcache_clean_set(dmc, set,
@@ -1927,7 +1952,7 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 			if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 				/* Write data to the cache */
 				dm_io_async_bvec(1, &job->job_io_regions.cache, WRITE, 
-						 bio->bi_io_vec + bio->bi_idx,
+						 bio,
 						 flashcache_io_callback, job);
 				flashcache_clean_set(dmc, index / dmc->assoc, 0);
 			} else {
@@ -1941,7 +1966,7 @@ flashcache_write_hit(struct cache_c *dmc, struct bio *bio, int index)
 						 (struct dm_io_region *)&job->job_io_regions, 
 #endif
 						 WRITE, 
-						 bio->bi_io_vec + bio->bi_idx,
+						 bio,
 						 flashcache_io_callback, job);				
 			}
 		}
@@ -2388,7 +2413,7 @@ flashcache_start_uncached_io(struct cache_c *dmc, struct bio *bio)
 	atomic_inc(&dmc->nr_jobs);
 	dm_io_async_bvec(1, &job->job_io_regions.disk,
 			 ((is_write) ? WRITE : READ), 
-			 bio->bi_io_vec + bio->bi_idx,
+			 bio,
 			 flashcache_uncached_io_callback, job);
 }
 

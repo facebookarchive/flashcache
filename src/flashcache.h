@@ -41,6 +41,12 @@
 	} \
 } while(0)
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
+#define bi_sector	bi_iter.bi_sector
+#define bi_size		bi_iter.bi_size
+#define bi_idx		bi_iter.bi_idx
+#endif
+
 #define DMC_DEBUG 0
 #define DMC_DEBUG_LITE 0
 
@@ -418,7 +424,7 @@ struct kcached_job {
 	int    action;
 	int 	error;
 	struct flash_cacheblock *md_block;
-	struct bio_vec md_io_bvec;
+	struct page_list pl_base[1];
 	struct timeval io_start_time;
 	struct kcached_job *next;
 };
@@ -695,13 +701,14 @@ struct pending_job *flashcache_deq_pending(struct cache_c *dmc, int index);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 int dm_io_async_bvec(unsigned int num_regions, 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
-			    struct dm_io_region *where, 
+		     struct dm_io_region *where, 
 #else
-			    struct io_region *where, 
+		     struct io_region *where, 
 #endif
-			    int rw, 
-			    struct bio_vec *bvec, io_notify_fn fn, 
-			    void *context);
+		     int rw, 
+		     struct bio *bio,
+		     io_notify_fn fn, 
+		     void *context);
 #endif
 
 void flashcache_detect_fallow(struct cache_c *dmc, int index);
