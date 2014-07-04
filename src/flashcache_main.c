@@ -103,7 +103,6 @@ extern struct kcopyd_client *flashcache_kcp_client; /* Kcopyd client for writing
 extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)
 int dm_io_async_bvec_pl(unsigned int num_regions, 
 			struct dm_io_region *where, 
 			int rw, 
@@ -121,7 +120,6 @@ int dm_io_async_bvec_pl(unsigned int num_regions,
 	iorq.client = flashcache_io_client;
 	return dm_io(&iorq, num_regions, where, NULL);
 }
-#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 int dm_io_async_bvec(unsigned int num_regions, 
