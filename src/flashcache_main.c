@@ -104,7 +104,11 @@ extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
 #endif
 
 int dm_io_async_bvec_pl(unsigned int num_regions, 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
 			struct dm_io_region *where, 
+#else
+			struct io_region *where, 
+#endif
 			int rw, 
 			struct page_list *pl, 
 			io_notify_fn fn, 
@@ -115,6 +119,7 @@ int dm_io_async_bvec_pl(unsigned int num_regions,
 	iorq.bi_rw = rw;
 	iorq.mem.type = DM_IO_PAGE_LIST;
 	iorq.mem.ptr.pl = pl;
+	iorq.mem.offset = 0;
 	iorq.notify.fn = fn;
 	iorq.notify.context = context;
 	iorq.client = flashcache_io_client;
@@ -718,10 +723,9 @@ flashcache_alloc_md_sector(struct kcached_job *job)
 {
 	struct page *page = NULL;
 	struct cache_c *dmc = job->dmc;	
+	unsigned long addr = 0;
 	
 	if (likely((dmc->sysctl_error_inject & MD_ALLOC_SECTOR_ERROR) == 0)) {
-		unsigned long addr;
-
 		/* Get physically consecutive pages */
 		addr = __get_free_pages(GFP_NOIO, get_order(MD_BLOCK_BYTES(job->dmc)));
 		if (addr)
@@ -731,10 +735,12 @@ flashcache_alloc_md_sector(struct kcached_job *job)
 	if (unlikely(page == NULL)) {
 		job->dmc->flashcache_errors.memory_alloc_errors++;
 		return -ENOMEM;
+	} else {
+		job->pl_base[0].page = page;
+		job->pl_base[0].next = NULL;	
+		job->md_block = (struct flash_cacheblock *)addr;
+		return 0;
 	}
-	job->pl_base[0].page = page;
-	job->pl_base[0].next = NULL;	
-	return 0;
 }
 
 static void
