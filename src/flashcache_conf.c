@@ -861,7 +861,8 @@ flashcache_get_dev(struct dm_target *ti, char *pth, struct dm_dev **dmd,
  *  arg[5]: cache block size (in sectors)
  *  arg[6]: cache size (in blocks)
  *  arg[7]: cache associativity
- *  arg[8]: md block size (in sectors)
+ *  arg[8]: cache disk associativity
+ *  arg[9]: md block size (in sectors)
  */
 int 
 flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
@@ -1003,7 +1004,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 
-	if (argc >= 8) {
+	if (argc >= 9) {
 		if (sscanf(argv[8], "%u", &dmc->disk_assoc) != 1) {
 			ti->error = "flashcache: Invalid disk associativity";
 			r = -EINVAL;
@@ -1025,7 +1026,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
 
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 9) {
+		if (argc >= 10) {
 			if (sscanf(argv[9], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
