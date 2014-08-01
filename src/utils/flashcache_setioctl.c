@@ -76,11 +76,10 @@ main(int argc, char **argv)
 			case 'w':
 				list = 'w';
 				pidmax = strtoimax(optarg, &tmp, 10);
-				if(tmp == optarg || *tmp != '\0' || pidmax != (pid_t)pidmax) {
+				if (tmp == optarg || *tmp != '\0' || pidmax != (pid_t)pidmax) {
 					fprintf(stderr, "Bad PID!\n");
 					exit(1);
-				}
-				else {
+				} else {
 					pid = (pid_t)pidmax;
 				}
 				break;

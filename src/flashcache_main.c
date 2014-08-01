@@ -375,7 +375,7 @@ flashcache_io_callback(unsigned long error, void *context)
 	}
 }
 
-static void
+void
 flashcache_free_pending_jobs(struct cache_c *dmc, struct cacheblock *cacheblk, 
 			     int error)
 {
@@ -580,7 +580,7 @@ flashcache_do_io(struct kcached_job *job)
 /*
  * Map a block from the source device to a block in the cache device.
  */
-static unsigned long 
+unsigned long 
 hash_block(struct cache_c *dmc, sector_t dbn)
 {
 	unsigned long set_number, value;
@@ -1261,7 +1261,7 @@ flashcache_clean_set(struct cache_c *dmc, int set, int force_clean_blocks)
 		       flashcache_can_clean(dmc, cache_set, nr_writes) &&
 		       nr_writes < threshold_clean) {
 			cacheblk = &dmc->cache[i];
-			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {	
+			if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
 				cacheblk->cache_state |= DISKWRITEINPROG;
 				flashcache_clear_fallow(dmc, i);
 				writes_list[nr_writes].dbn = cacheblk->dbn;
@@ -1309,9 +1309,12 @@ out:
 	if (nr_writes > 0) {
 		flashcache_merge_writes(dmc, writes_list, set_dirty_list, &nr_writes, set);
 		dmc->flashcache_stats.clean_set_ios += nr_writes;
+		if (nr_writes < FLASHCACHE_WRITE_CLUST_HIST_SIZE)
+			dmc->write_clust_hist[nr_writes]++;
+		else
+			dmc->write_clust_hist_ovf++;
 		spin_unlock_irq(&cache_set->set_spin_lock);
-		for (i = 0 ; i < nr_writes ; i++)
-			flashcache_dirty_writeback(dmc, writes_list[i].index);
+		flashcache_copy_data(dmc, cache_set, nr_writes, writes_list);
 	} else {
 		if (cache_set->nr_dirty > dmc->dirty_thresh_set)
 			do_delayed_clean = 1;
@@ -1481,7 +1484,7 @@ flashcache_read(struct cache_c *dmc, struct bio *bio)
 	 * lock.
 	 */
 	spin_lock_irqsave(&dmc->ioctl_lock, flags);
-	if (res == -1 || flashcache_uncacheable(dmc, bio)) {
+	if (res == -1 || dmc->write_only_cache || flashcache_uncacheable(dmc, bio)) {
 		spin_unlock_irqrestore(&dmc->ioctl_lock, flags);
 		/* No room , non-cacheable or sequential i/o means not wanted in cache */
 		if ((res > 0) && 
@@ -1998,7 +2001,7 @@ flashcache_write(struct cache_c *dmc, struct bio *bio)
 	int res;
 	struct cacheblock *cacheblk;
 	int queued;
-	
+
 	flashcache_setlocks_multiget(dmc, bio);
 	res = flashcache_lookup(dmc, bio, &index);
 	if (res != -1) {
@@ -2442,5 +2445,6 @@ EXPORT_SYMBOL(flashcache_md_write_callback);
 EXPORT_SYMBOL(flashcache_md_write_kickoff);
 EXPORT_SYMBOL(flashcache_md_write_done);
 EXPORT_SYMBOL(flashcache_md_write);
+EXPORT_SYMBOL(hash_block);
 
 

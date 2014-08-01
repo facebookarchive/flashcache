@@ -46,7 +46,7 @@
 void
 usage(char *pname)
 {
-	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
+	fprintf(stderr, "Usage: %s [-v] [-p back|thru|around] [-w] [-b block size] [-m md block size] [-s cache size] [-a associativity] cachedev ssd_devname disk_devname\n", pname);
 	fprintf(stderr, "Usage : %s Cache Mode back|thru|around is required argument\n",
 		pname);
 	fprintf(stderr, "Usage : %s Default units for -b, -m, -s are sectors, or specify in k/M/G. Default associativity is 512.\n",
@@ -62,6 +62,7 @@ char buf[512];
 char dmsetup_cmd[8192];
 int verbose = 0;
 int force = 0;
+int write_cache_only = 0;
 
 static sector_t
 get_block_size(char *s)
@@ -202,13 +203,13 @@ main(int argc, char **argv)
 	struct sysinfo i;
 	int cache_sectorsize;
 	int associativity = 512;
-	int disk_associativity = 512;
+	int disk_associativity = 0;
 	int ret;
 	int cache_mode = -1;
 	char *cache_mode_str;
 	
 	pname = argv[0];
-	while ((c = getopt(argc, argv, "fs:b:d:m:va:p:")) != -1) {
+	while ((c = getopt(argc, argv, "fs:b:d:m:va:p:w")) != -1) {
 		switch (c) {
 		case 's':
 			cache_size = get_cache_size(optarg);
@@ -246,6 +247,9 @@ main(int argc, char **argv)
 				cache_mode_str = "WRITE_AROUND";
 			} else
 				usage(pname);
+                        break;
+		case 'w':
+			write_cache_only = 1;
                         break;			
 		case '?':
 			usage(pname);
@@ -344,8 +348,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "You can reduce this with a smaller cache or a larger blocksize.\n");
 		check_sure();
 	}
-	if (disk_associativity == 0 ||
-	    disk_associativity > associativity) {
+	if (disk_associativity > associativity) {
 		fprintf(stderr, "%s: Invalid Disk Associativity %ld\n",
 			pname, disk_associativity);
 		exit(1);
@@ -355,10 +358,10 @@ main(int argc, char **argv)
 			ssd_devname, disk_devname);
 		check_sure();
 	}
-	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %d %lu %lu"
+	sprintf(dmsetup_cmd, "echo 0 %lu flashcache %s %s %s %d 2 %lu %lu %d %lu %d %lu"
 		" | dmsetup create %s",
 		disk_devsize, disk_devname, ssd_devname, cachedev, cache_mode, block_size, 
-		cache_size, associativity, disk_associativity, md_block_size,
+		cache_size, associativity, disk_associativity, write_cache_only, md_block_size,
 		cachedev);
 
 	/* Go ahead and create the cache.

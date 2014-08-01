@@ -29,6 +29,9 @@ are cached (tunable).
 Writeback - fastest but less safe.  Writes only go to the ssd initially, and
 based on various policies are written to disk later.  All disk reads are
 cached (tunable).  
+
+Writeonly - variant of writeback caching. In this mode, only incoming writes
+are cached. No reads are ever cached.
     
 Cache Persistence :
 =================
@@ -55,7 +58,7 @@ instead of using dmsetup.
 
 flashcache_create : Create a new flashcache volume.
 
-flashcache_create [-v] -p back|around|thru [-s cache size] [-b block size] cachedevname ssd_devname disk_devname
+flashcache_create [-v] -p back|around|thru [-s cache size] [-w] [-b block size] cachedevname ssd_devname disk_devname
 -v : verbose.
 -p : cache mode (writeback/writethrough/writearound).
 -s : cache size. Optional. If this is not specified, the entire ssd device
@@ -66,6 +69,9 @@ flashcache_create [-v] -p back|around|thru [-s cache size] [-b block size] cache
      (A 4KB blocksize is the correct choice for the vast majority of 
      applications. But see the section "Cache Blocksize selection" below).
 -f : force create. by pass checks (eg for ssd sectorsize).
+-w : write cache mode. Only writes are cached, not reads
+-d : disk associativity, within each cache set, we store several contigous
+     disk extents. Defaults to off.
 
 Examples :
 flashcache_create -p back -s 1g -b 4k cachedev /dev/sdc /dev/sdb

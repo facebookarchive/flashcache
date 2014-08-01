@@ -302,6 +302,7 @@ flashcache_writeback_md_store(struct cache_c *dmc)
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	header->cache_version = dmc->on_ssd_version;
+	header->write_only_cache = dmc->write_only_cache;
 	
 	DPRINTK("Store metadata to disk: block size(%u), md block size(%u), cache size(%llu)" \
 	        "associativity(%u)",
@@ -554,6 +555,7 @@ flashcache_writeback_create(struct cache_c *dmc, int force)
 	header->cache_devsize = to_sector(dmc->cache_dev->bdev->bd_inode->i_size);
 	header->disk_devsize = to_sector(dmc->disk_dev->bdev->bd_inode->i_size);
 	dmc->on_ssd_version = header->cache_version = FLASHCACHE_VERSION;
+	header->write_only_cache = dmc->write_only_cache;
 	where.sector = 0;
 	where.count = dmc->md_block_size;
 	
@@ -620,11 +622,17 @@ flashcache_writeback_load(struct cache_c *dmc)
 		return 1;
 	}
 	dmc->disk_assoc = header->disk_assoc;
+	dmc->write_only_cache = header->write_only_cache;
+	
 	if (header->cache_version < 3)
 		/* Disk Assoc was introduced in On SSD version 3 */
 		dmc->disk_assoc = 0;
 	if (dmc->disk_assoc != 0)
 		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
+
+	if (header->cache_version < 4)
+		/* write_only_cache was introduced in On SSD version 4 */
+		dmc->write_only_cache = 0;
 
 	dmc->on_ssd_version = header->cache_version;
 		
@@ -1003,17 +1011,19 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		dmc->assoc = DEFAULT_CACHE_ASSOC;
 	dmc->assoc_shift = ffs(dmc->assoc) - 1;
 
-	if (argc >= 8) {
+	if (argc >= 9) {
 		if (sscanf(argv[8], "%u", &dmc->disk_assoc) != 1) {
 			ti->error = "flashcache: Invalid disk associativity";
 			r = -EINVAL;
 			goto bad3;
 		}
-		if (!dmc->disk_assoc || (dmc->disk_assoc & (dmc->disk_assoc - 1)) ||
-		    dmc->disk_assoc > FLASHCACHE_MAX_DISK_ASSOC ||
-		    dmc->disk_assoc < FLASHCACHE_MIN_DISK_ASSOC ||
-		    dmc->size < dmc->disk_assoc ||
-		    (dmc->assoc * dmc->block_shift) < dmc->disk_assoc) {
+		/* disk_assoc of 0 is permitted value */
+		if ((dmc->disk_assoc > 0) &&
+		    ((!dmc->disk_assoc || (dmc->disk_assoc & (dmc->disk_assoc - 1)) ||
+		      dmc->disk_assoc > FLASHCACHE_MAX_DISK_ASSOC ||
+		      dmc->disk_assoc < FLASHCACHE_MIN_DISK_ASSOC ||
+		      dmc->size < dmc->disk_assoc ||
+		      (dmc->assoc * dmc->block_shift) < dmc->disk_assoc))) {
 			printk(KERN_ERR "Invalid Disk Assoc assoc %d disk_assoc %d size %ld\n",
 			       dmc->assoc, dmc->disk_assoc, dmc->size);
 			ti->error = "flashcache: Invalid disk associativity";
@@ -1024,9 +1034,32 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (dmc->disk_assoc != 0)
 		dmc->disk_assoc_shift = ffs(dmc->disk_assoc) - 1;
 
+	if (argc >= 10) {
+		if (sscanf(argv[9], "%u", &dmc->write_only_cache) != 1) {
+			ti->error = "flashcache: Invalid Write Cache setting";
+			r = -EINVAL;
+			goto bad3;
+		}
+		if ((dmc->write_only_cache == 1) &&
+		    (dmc->cache_mode != FLASHCACHE_WRITE_BACK)) {
+			printk(KERN_ERR "Write Cache Setting only valid with WRITE_BACK %d\n",
+			       dmc->write_only_cache);
+			ti->error = "flashcache: Invalid Write Cache Setting";
+			r = -EINVAL;
+			goto bad3;
+		}
+		if (dmc->write_only_cache < 0 || dmc->write_only_cache > 1) {
+			printk(KERN_ERR "Invalid Write Cache Setting %d\n",
+			       dmc->write_only_cache);
+			ti->error = "flashcache: Invalid Write Cache Setting";
+			r = -EINVAL;
+			goto bad3;
+		}
+	}
+
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
-		if (argc >= 9) {
-			if (sscanf(argv[9], "%u", &dmc->md_block_size) != 1) {
+		if (argc >= 11) {
+			if (sscanf(argv[10], "%u", &dmc->md_block_size) != 1) {
 				ti->error = "flashcache: Invalid metadata block size";
 				r = -EINVAL;
 				goto bad3;
@@ -1106,12 +1139,22 @@ init:
 		goto bad3;
 	}		
 
+	if (flashcache_kcopy_init(dmc)) {
+		ti->error = "Unable to allocate memory";
+		r = -ENOMEM;
+		flashcache_diskclean_destroy(dmc);
+		vfree((void *)dmc->cache);
+		vfree((void *)dmc->cache_sets);
+		goto bad3;
+	}		
+
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
 		order = (dmc->md_blocks - 1) * sizeof(struct cache_md_block_head);
 		dmc->md_blocks_buf = (struct cache_md_block_head *)vmalloc(order);
 		if (!dmc->md_blocks_buf) {
 			ti->error = "Unable to allocate memory";
 			r = -ENOMEM;
+			flashcache_kcopy_destroy(dmc);
 			flashcache_diskclean_destroy(dmc);
 			vfree((void *)dmc->cache);
 			vfree((void *)dmc->cache_sets);
@@ -1160,7 +1203,9 @@ init:
 	dmc->sysctl_fast_remove = 0;
 	dmc->sysctl_cache_all = 1;
 	dmc->sysctl_fallow_clean_speed = FALLOW_CLEAN_SPEED;
-	dmc->sysctl_fallow_delay = FALLOW_DELAY;
+	if (dmc->write_only_cache == 0)
+		/* Don't both fallow cleaning for write only caching */
+		dmc->sysctl_fallow_delay = FALLOW_DELAY;
 	dmc->sysctl_skip_seq_thresh_kb = SKIP_SEQUENTIAL_THRESHOLD;
 	dmc->sysctl_clean_on_read_miss = 0;
 	dmc->sysctl_clean_on_write_miss = 0;
@@ -1382,6 +1427,7 @@ flashcache_dtr(struct dm_target *ti)
 	flashcache_dtr_stats_print(dmc);
 	flashcache_hash_destroy(dmc);
 	flashcache_diskclean_destroy(dmc);
+	flashcache_kcopy_destroy(dmc);
 	vfree((void *)dmc->cache);
 	vfree((void *)dmc->cache_sets);
 	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
@@ -1535,9 +1581,12 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		cache_pct = 0;
 		dirty_pct = 0;
 	}
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
-		cache_mode = "WRITE_BACK";
-	else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH)
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK) {
+		if (dmc->write_only_cache)
+			cache_mode = "WRITE_CACHE";
+		else
+			cache_mode = "WRITE_BACK";
+	} else if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH)
 		cache_mode = "WRITE_THROUGH";
 	else
 		cache_mode = "WRITE_AROUND";
@@ -1572,6 +1621,15 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 		if (size_hist[i] > 0)
 			DMEMIT("%d:%llu ", i*512, size_hist[i]);
 	}
+#if 0
+	DMEMIT("\n");
+	DMEMIT("Write Clustering Hist: ");
+	for (i = 0 ; i < FLASHCACHE_WRITE_CLUST_HIST_SIZE ; i++) {
+		if (dmc->write_clust_hist[i] > 0)
+			DMEMIT("%d:%llu ", i, dmc->write_clust_hist[i]);
+	}
+	DMEMIT(">=128:%llu ", dmc->write_clust_hist_ovf);	
+#endif
 }
 
 /*
@@ -1792,7 +1850,7 @@ flashcache_init(void)
 /*
  * Destroy a cache target.
  */
-void 
+void __exit
 flashcache_exit(void)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,27)

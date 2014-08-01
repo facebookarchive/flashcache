@@ -25,7 +25,7 @@
 #ifndef FLASHCACHE_H
 #define FLASHCACHE_H
 
-#define FLASHCACHE_VERSION		3
+#define FLASHCACHE_VERSION		4
 
 #define DEV_PATHLEN	128
 
@@ -295,7 +295,8 @@ struct cache_c {
 	unsigned int assoc_shift;	/* Consecutive blocks size in bits */
 	unsigned int num_sets;		/* Number of cache sets */
 	int	cache_mode;
-
+	int	write_only_cache;
+	
 	wait_queue_head_t destroyq;	/* Wait queue for I/O completion */
 	/* XXX - Updates of nr_jobs should happen inside the lock. But doing it outside
 	   is OK since the filesystem is unmounted at this point */
@@ -353,6 +354,9 @@ struct cache_c {
 	spinlock_t 		diskclean_list_lock;
 	struct diskclean_buf_ 	*diskclean_buf_head;
 
+	spinlock_t		kcopy_job_alloc_lock;
+	struct flashcache_copy_job *kcopy_jobs_head;
+
 	struct cache_c	*next_cache;
 
 	void *sysctl_handle;
@@ -396,6 +400,10 @@ struct cache_c {
 	struct sequential_io	seq_recent_ios[SEQUENTIAL_TRACKER_QUEUE_DEPTH];
 	struct sequential_io	*seq_io_head;
 	struct sequential_io 	*seq_io_tail;
+
+#define FLASHCACHE_WRITE_CLUST_HIST_SIZE	128
+	unsigned long	write_clust_hist[FLASHCACHE_WRITE_CLUST_HIST_SIZE];
+	unsigned long	write_clust_hist_ovf;
 };
 
 /* kcached/pending job states */
@@ -434,6 +442,30 @@ struct pending_job {
 	int	action;	
 	int	index;
 	struct pending_job *prev, *next;
+};
+
+struct flashcache_copy_job {
+	struct list_head list;
+	struct cache_c *dmc;
+	int nr_writes;
+	int reads_completed;
+	int write_kickoff;
+	struct page_list *pl_base;
+	struct page_list *pl_list_head;
+	struct page **page_base;
+	struct kcached_job **job_base;
+	struct job_io_regions_ {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
+		struct io_region disk;
+		struct io_region *cache;
+#else
+		struct dm_io_region disk;
+		struct dm_io_region *cache;
+#endif
+	} job_io_regions;
+	int error;
+	spinlock_t copy_job_spinlock;
+	struct flashcache_copy_job *next;
 };
 #endif /* __KERNEL__ */
 
@@ -507,6 +539,7 @@ struct flash_superblock {
 	u_int32_t cache_version;
 	u_int32_t md_block_size;
 	u_int32_t disk_assoc;
+	u_int32_t write_only_cache;
 };
 
 /* 
@@ -552,6 +585,10 @@ struct flash_cacheblock {
 
 #define INDEX_TO_CACHE_ADDR(DMC, INDEX)	\
 	(((sector_t)(INDEX) << (DMC)->block_shift) + (DMC)->md_blocks * MD_SECTORS_PER_BLOCK((DMC)))
+
+#define CACHE_ADDR_TO_INDEX(DMC, CACHE_ADDR)	\
+	((int)(((CACHE_ADDR) - ((DMC)->md_blocks * MD_SECTORS_PER_BLOCK((DMC)))) >> (DMC)->block_shift))
+
 
 #ifdef __KERNEL__
 
@@ -671,6 +708,9 @@ int flashcache_md_io_empty(void);
 int flashcache_md_complete_empty(void);
 void flashcache_md_write_done(struct kcached_job *job);
 void flashcache_do_pending(struct kcached_job *job);
+void flashcache_free_pending_jobs(struct cache_c *dmc, struct cacheblock *cacheblk, 
+				  int error);
+
 void flashcache_md_write(struct kcached_job *job);
 void flashcache_md_write_kickoff(struct kcached_job *job);
 void flashcache_do_io(struct kcached_job *job);
@@ -740,6 +780,19 @@ int flashcache_diskclean_alloc(struct cache_c *dmc,
 			       struct dbn_index_pair **buf1, struct dbn_index_pair **buf2);
 void flashcache_diskclean_free(struct cache_c *dmc, struct dbn_index_pair *buf1, 
 			       struct dbn_index_pair *buf2);
+
+unsigned long hash_block(struct cache_c *dmc, sector_t dbn);
+void flashcache_copy_data(struct cache_c *dmc, struct cache_set *cache_set,
+			  int nr_writes, struct dbn_index_pair *writes_list);
+
+void push_cleaning_read_complete(struct flashcache_copy_job *job);
+void push_cleaning_write_complete(struct flashcache_copy_job *job);
+void flashcache_clean_write_kickoff(struct flashcache_copy_job *job);
+void flashcache_clean_md_write_kickoff(struct flashcache_copy_job *job);
+
+int flashcache_kcopy_init(struct cache_c *dmc);
+void flashcache_kcopy_destroy(struct cache_c *dmc);
+
 
 #endif /* __KERNEL__ */
 

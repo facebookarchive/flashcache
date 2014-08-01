@@ -59,15 +59,6 @@
 
 static DEFINE_SPINLOCK(_job_lock);
 
-static void
-flashcache_merge_writes_old(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
-			    struct dbn_index_pair *set_dirty_list,
-			    int *nr_writes, int set);
-static void
-flashcache_merge_writes_new(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
-			    struct dbn_index_pair *set_dirty_list,
-			    int *nr_writes, int set);
-
 extern mempool_t *_job_pool;
 extern mempool_t *_pending_job_pool;
 
@@ -79,6 +70,21 @@ LIST_HEAD(_io_jobs);
 LIST_HEAD(_md_io_jobs);
 LIST_HEAD(_md_complete_jobs);
 LIST_HEAD(_uncached_io_complete_jobs);
+
+LIST_HEAD(_cleaning_read_complete_jobs);
+LIST_HEAD(_cleaning_write_complete_jobs);
+
+int
+flashcache_cleaning_read_empty(void)
+{
+	return list_empty(&_cleaning_read_complete_jobs);
+}
+
+int
+flashcache_cleaning_write_empty(void)
+{
+	return list_empty(&_cleaning_write_complete_jobs);
+}
 
 int
 flashcache_pending_empty(void)
@@ -576,6 +582,42 @@ push_md_complete(struct kcached_job *job)
 	push(&_md_complete_jobs, job);	
 }
 
+void 
+push_cleaning(struct list_head *jobs, struct flashcache_copy_job *job)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&_job_lock, flags);
+	list_add_tail(&job->list, jobs);
+	spin_unlock_irqrestore(&_job_lock, flags);
+}
+
+struct flashcache_copy_job *
+pop_cleaning(struct list_head *jobs)
+{
+	struct flashcache_copy_job *job = NULL;
+
+	spin_lock_irq(&_job_lock);
+	if (!list_empty(jobs)) {
+		job = list_entry(jobs->next, struct flashcache_copy_job, list);
+		list_del(&job->list);
+	}
+	spin_unlock_irq(&_job_lock);
+	return job;
+}
+
+void
+push_cleaning_read_complete(struct flashcache_copy_job *job)
+{
+	push_cleaning(&_cleaning_read_complete_jobs, job);
+}
+
+void
+push_cleaning_write_complete(struct flashcache_copy_job *job)
+{
+	push_cleaning(&_cleaning_write_complete_jobs, job);
+}
+
 #define FLASHCACHE_YIELD	32
 
 static void
@@ -586,6 +628,22 @@ process_jobs(struct list_head *jobs,
 	int done = 0;
 
 	while ((job = pop(jobs))) {
+		if (done++ >= FLASHCACHE_YIELD) {
+			yield();
+			done = 0;
+		}
+		(void)fn(job);
+	}
+}
+
+static void
+process_clean_jobs(struct list_head *jobs,
+		   void (*fn) (struct flashcache_copy_job *))
+{
+	struct flashcache_copy_job *job;
+	int done = 0;
+
+	while ((job = pop_cleaning(jobs))) {
 		if (done++ >= FLASHCACHE_YIELD) {
 			yield();
 			done = 0;
@@ -606,6 +664,8 @@ do_work(struct work_struct *unused)
 	process_jobs(&_md_io_jobs, flashcache_md_write_kickoff);
 	process_jobs(&_io_jobs, flashcache_do_io);
 	process_jobs(&_uncached_io_complete_jobs, flashcache_uncached_io_complete);
+	process_clean_jobs(&_cleaning_read_complete_jobs, flashcache_clean_write_kickoff);
+	process_clean_jobs(&_cleaning_write_complete_jobs, flashcache_clean_md_write_kickoff);	
 }
 
 struct kcached_job *
@@ -712,131 +772,6 @@ flashcache_merge_writes(struct cache_c *dmc, struct dbn_index_pair *writes_list,
 			struct dbn_index_pair *set_dirty_list,
 			int *nr_writes, int set)
 {
-	if (dmc->sysctl_new_style_write_merge)
-		flashcache_merge_writes_new(dmc, writes_list, 
-					    set_dirty_list,
-					    nr_writes, set);
-	else
-		flashcache_merge_writes_old(dmc, writes_list, 
-					    set_dirty_list,
-					    nr_writes, set);
-}
-
-static void
-flashcache_merge_writes_old(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
-			    struct dbn_index_pair *set_dirty_list,
-			    int *nr_writes, int set)
-{	
-	int start_index = set * dmc->assoc;
-	int end_index = start_index + dmc->assoc;
-	int old_writes = *nr_writes;
-	int new_inserts = 0;
-	int ix, nr_set_dirty;
-	struct cacheblock *cacheblk;
-
-	VERIFY(spin_is_locked(&dmc->cache_sets[set].set_spin_lock));
-	if (unlikely(*nr_writes == 0))
-		return;
-	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair),
-	     cmp_dbn, swap_dbn_index_pair);
-	nr_set_dirty = 0;
-	for (ix = start_index ; ix < end_index ; ix++) {
-		cacheblk = &dmc->cache[ix];
-		/*
-		 * Any DIRTY block in "writes_list" will be marked as 
-		 * DISKWRITEINPROG already, so we'll skip over those here.
-		 */
-		if ((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY) {
-			set_dirty_list[nr_set_dirty].dbn = cacheblk->dbn;
-			set_dirty_list[nr_set_dirty].index = ix;
-			nr_set_dirty++;
-		}
-	}
-	if (nr_set_dirty == 0)
-		return;
-	sort(set_dirty_list, nr_set_dirty, sizeof(struct dbn_index_pair),
-	     cmp_dbn, swap_dbn_index_pair);
-	for (ix = 0 ; ix < nr_set_dirty ; ix++) {
-		int back_merge, k;
-		int i;
-
-		cacheblk = &dmc->cache[set_dirty_list[ix].index];
-		back_merge = -1;
-		VERIFY((cacheblk->cache_state & (DIRTY | BLOCK_IO_INPROG)) == DIRTY);
-		for (i = 0 ; i < *nr_writes ; i++) {
-			int insert;
-			int j = 0;
-				
-			insert = 0;
-			if (cacheblk->dbn + dmc->block_size == writes_list[i].dbn) {
-				/* cacheblk to be inserted above i */
-				insert = 1;
-				j = i;
-				back_merge = j;
-			}
-			if (cacheblk->dbn - dmc->block_size == writes_list[i].dbn ) {
-				/* cacheblk to be inserted after i */
-				insert = 1;
-				j = i + 1;
-			}
-			VERIFY(j < dmc->assoc);
-			if (insert) {
-				cacheblk->cache_state |= DISKWRITEINPROG;
-				flashcache_clear_fallow(dmc, set_dirty_list[ix].index);
-				/* 
-				 * Shift down everthing from j to ((*nr_writes) - 1) to
-				 * make room for the new entry. And add the new entry.
-				 */
-				for (k = (*nr_writes) - 1 ; k >= j ; k--)
-					writes_list[k + 1] = writes_list[k];
-				writes_list[j].dbn = cacheblk->dbn;
-				writes_list[j].index = cacheblk - &dmc->cache[0];
-				(*nr_writes)++;
-				VERIFY(*nr_writes <= dmc->assoc);
-				new_inserts++;
-				if (back_merge == -1)
-					dmc->flashcache_stats.front_merge++;
-				else
-					dmc->flashcache_stats.back_merge++;
-				VERIFY(*nr_writes <= dmc->assoc);
-				break;
-			}
-		}
-		/*
-		 * If we did a back merge, we need to walk back in the set's dirty list
-		 * to see if we can pick off any more contig blocks. Forward merges don't
-		 * need this special treatment since we are walking the 2 lists in that 
-		 * direction. It would be nice to roll this logic into the above.
-		 */
-		if (back_merge != -1) {
-			for (k = ix - 1 ; k >= 0 ; k--) {
-				int n;
-
-				if (set_dirty_list[k].dbn + dmc->block_size != 
-				    writes_list[back_merge].dbn)
-					break;
-				dmc->cache[set_dirty_list[k].index].cache_state |= DISKWRITEINPROG;
-				flashcache_clear_fallow(dmc, set_dirty_list[k].index);
-				for (n = (*nr_writes) - 1 ; n >= back_merge ; n--)
-					writes_list[n + 1] = writes_list[n];
-				writes_list[back_merge].dbn = set_dirty_list[k].dbn;
-				writes_list[back_merge].index = set_dirty_list[k].index;
-				(*nr_writes)++;
-				VERIFY(*nr_writes <= dmc->assoc);
-				new_inserts++;
-				dmc->flashcache_stats.back_merge++;
-				VERIFY(*nr_writes <= dmc->assoc);				
-			}
-		}
-	}
-	VERIFY((*nr_writes) == (old_writes + new_inserts));
-}
-
-static void
-flashcache_merge_writes_new(struct cache_c *dmc, struct dbn_index_pair *writes_list, 
-			    struct dbn_index_pair *set_dirty_list,
-			    int *nr_writes, int set)
-{
 	int dirty_blocks_in = *nr_writes;
 	struct cacheblock *cacheblk;
 	int i;
@@ -889,7 +824,6 @@ flashcache_merge_writes_new(struct cache_c *dmc, struct dbn_index_pair *writes_l
 	}
 	/* This may be unnecessary. But return the list of blocks to write out sorted */
 	sort(writes_list, *nr_writes, sizeof(struct dbn_index_pair), cmp_dbn, swap_dbn_index_pair);
-
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
