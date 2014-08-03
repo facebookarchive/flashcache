@@ -1314,7 +1314,18 @@ out:
 		else
 			dmc->write_clust_hist_ovf++;
 		spin_unlock_irq(&cache_set->set_spin_lock);
+		/* 
+		 * XXX - There are some subtle bugs in the flashcache_kcopy code 
+		 * (leaked copy jobs). Until we fix those, revert to the original
+		 * logic of using the kernel kcopyd code. If you enable 
+		 * flashcache_kcopy, enable the code in flashcache_kcopy_init().
+		 */
+#if 1
+		for (i = 0 ; i < nr_writes ; i++)
+			flashcache_dirty_writeback(dmc, writes_list[i].index);
+#else
 		flashcache_copy_data(dmc, cache_set, nr_writes, writes_list);
+#endif
 	} else {
 		if (cache_set->nr_dirty > dmc->dirty_thresh_set)
 			do_delayed_clean = 1;

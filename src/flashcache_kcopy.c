@@ -74,15 +74,23 @@ extern atomic_t nr_cache_jobs;
  * first and then doing one very large disk write.
  */
 
-#if 1
+/* 
+ * There are some subtle bugs in this code where we leak copy jobs.
+ * Until we fix that, disable this. 
+ * To re-enable this, 
+ * 1) Enable the flashcache_copy_data() call in flashcache_clean_set().
+ * 2) Enable the code in _init and _destroy below.
+ */
+
 #define NUM_KCOPY_JOBS		32
 
 int
 flashcache_kcopy_init(struct cache_c *dmc)
 {
+#if 0	
 	struct flashcache_copy_job *job;
 	int i;
-	
+
 	dmc->kcopy_jobs_head = NULL;
 	spin_lock_init(&dmc->kcopy_job_alloc_lock);
 	/* Allocate the kcopy jobs and push them onto the list */
@@ -127,6 +135,9 @@ flashcache_kcopy_init(struct cache_c *dmc)
 		job->next = dmc->kcopy_jobs_head;
 		dmc->kcopy_jobs_head = job;
 	}
+#else
+	dmc->kcopy_jobs_head = NULL;
+#endif
 	return 0;
 }
 
@@ -248,122 +259,6 @@ nomem:
 	free_flashcache_copy_job(dmc, job);
 	return NULL;
 }
-#else
-struct flashcache_copy_job *
-new_flashcache_copy_job(struct cache_c *dmc, 
-		     int nr_writes, 
-		     struct dbn_index_pair *writes_list)
-{
-	struct flashcache_copy_job *job;
-	int i, j;
-	
-	job = kmalloc(sizeof(struct flashcache_copy_job), GFP_NOIO);
-	if (unlikely(job == NULL))
-		return NULL;
-	job->dmc = dmc;
-	job->nr_writes = nr_writes;
-	job->reads_completed = 0;
-	job->write_kickoff = 0;
-	job->error = 0;
-	job->pl_base = NULL;
-	job->pl_list_head = NULL;
-	job->job_base = NULL;
-	job->job_io_regions.cache = NULL;
-	job->pl_base = kmalloc(nr_writes * sizeof(struct page_list), 
-			       GFP_NOIO);
-	if (unlikely(job->pl_base == NULL))
-		goto nomem;
-	job->page_base = kmalloc(nr_writes * sizeof(struct page *),
-			       GFP_NOIO);
-	if (unlikely(job->page_base == NULL))
-		goto nomem;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
-	job->job_io_regions.cache = kmalloc(nr_writes * sizeof(struct io_region),
-					    GFP_NOIO);
-#else
-	job->job_io_regions.cache = kmalloc(nr_writes * sizeof(struct dm_io_region),
-					    GFP_NOIO);
-#endif
-	if (unlikely(job->job_io_regions.cache == NULL))
-		goto nomem;
-	job->job_base = kmalloc(nr_writes * sizeof(struct kcached_job *), GFP_NOIO);
-	if (unlikely(job->job_base == NULL))
-		goto nomem;
-	for (i = 0 ; i < nr_writes ; i++) {
-		job->page_base[i] = alloc_page(GFP_NOIO);
-		if (unlikely(job->page_base[i] == NULL)) {
-			for (j = 0 ; j < i ; j++)
-				__free_page(job->page_base[j]);
-			goto nomem;
-		}
-		job->job_base[i] = new_kcached_job(dmc, NULL, writes_list[i].index);
-		atomic_inc(&dmc->nr_jobs);
-		if (unlikely(job->job_base[i] == NULL)) {
-			for (j = 0 ; j <= i ; j++)
-				__free_page(job->page_base[j]);
-			for (j = 0 ; j < i ; j++) {
-				flashcache_free_cache_job(job->job_base[i]);
-				if (atomic_dec_and_test(&dmc->nr_jobs))
-					wake_up(&dmc->destroyq);
-			}
-			goto nomem;			
-		}
-	}
-	/* 
-	 * Stuff the pages into the page_list structures.
-	 * Null terminate each page_list entry, because we want to do 
-	 * the individial reads first.
-	 */
-	for (i = 0 ; i < nr_writes ; i++) {
-		job->pl_base[i].next = NULL;
-		job->pl_base[i].page = job->page_base[i];
-	}
-	spin_lock_init(&job->copy_job_spinlock);
-	for (i = 0 ; i < nr_writes ; i++) {
-		job->job_io_regions.cache[i].bdev = dmc->cache_dev->bdev;
-		job->job_io_regions.cache[i].sector = INDEX_TO_CACHE_ADDR(dmc, writes_list[i].index);
-		job->job_io_regions.cache[i].count = dmc->block_size;
-	}	
-	job->job_io_regions.disk.bdev = dmc->disk_dev->bdev;
-	job->job_io_regions.disk.sector = writes_list[0].dbn;
-	job->job_io_regions.disk.count = dmc->block_size * nr_writes;
-	atomic_inc(&nr_cache_jobs);
-	return job;
-nomem:
-	if (job->pl_base != NULL)
-		kfree(job->pl_base);
-	if (job->page_base != NULL)
-		kfree(job->page_base);
-	if (job->job_io_regions.cache != NULL)
-		kfree(job->job_io_regions.cache);	
-	if (job->job_base != NULL)
-		kfree(job->job_base);
-	kfree(job);
-	return NULL;
-}
-
-/* 
- * Important : This does NOT free the kcached jobs here. 
- * They will get freed separately, when metadata writes complete or when 
- * pending IOs complete. If you have not kicked off any of these things where
- * the kcached_job will get freed later, you need to free those before calling
- * into this !
- */
-void
-free_flashcache_copy_job(struct flashcache_copy_job *job)
-{
-	int i;
-
-	for (i = 0 ; i < job->nr_writes ; i++)
-		__free_page(job->page_base[i]);
-	kfree(job->job_io_regions.cache);
-	kfree(job->page_base);
-	kfree(job->pl_base);
-	kfree(job->job_base);
-	kfree(job);
-	atomic_dec(&nr_cache_jobs);
-}
-#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,22)
 extern struct dm_io_client *flashcache_io_client; /* Client memory pool*/
