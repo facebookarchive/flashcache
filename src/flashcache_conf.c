@@ -913,7 +913,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		ti->error = "flashcache: Virtual device name lookup failed";
 		goto bad3;
 	}
-	
+
 	r = flashcache_kcached_init(dmc);
 	if (r) {
 		ti->error = "Failed to initialize kcached";
@@ -932,7 +932,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		r = -EINVAL;
 		goto bad3;
 	}
-	
+
 	/* 
 	 * XXX - Persistence is totally ignored for write through and write around.
 	 * Maybe this should really be moved to the end of the param list ?
@@ -1464,7 +1464,6 @@ flashcache_status_info(struct cache_c *dmc, status_type_t type,
 	int sz = 0; /* DMEMIT */
 	struct flashcache_stats *stats = &dmc->flashcache_stats;
 
-	
 	if (stats->reads > 0)
 		read_hit_pct = stats->read_hits * 100 / stats->reads;
 	else
@@ -1572,7 +1571,6 @@ flashcache_status_table(struct cache_c *dmc, status_type_t type,
 	int i;
 	int sz = 0; /* DMEMIT */
 	char *cache_mode;
-	
 
 	if (dmc->size > 0) {
 		dirty_pct = ((u_int64_t)atomic_read(&dmc->nr_dirty) * 100) / dmc->size;
@@ -1654,7 +1652,7 @@ flashcache_status(struct dm_target *ti, status_type_t type,
 #endif
 {
 	struct cache_c *dmc = (struct cache_c *) ti->private;
-	
+
 	switch (type) {
 	case STATUSTYPE_INFO:
 		flashcache_status_info(dmc, type, result, maxlen);
@@ -1668,6 +1666,22 @@ flashcache_status(struct dm_target *ti, status_type_t type,
 #endif
 }
 
+static int
+flashcache_iterate_devices(struct dm_target *ti,
+			   iterate_devices_callout_fn fn, void *data)
+{
+	struct cache_c *dmc = (struct cache_c *) ti->private;
+	
+        int ret = 0;
+
+	ret = fn(ti, dmc->cache_dev, 
+		 0, to_sector(dmc->cache_dev->bdev->bd_inode->i_size),
+		 data);
+	if (!ret)
+		ret = fn(ti, dmc->disk_dev, 0, ti->len, data);		
+        return ret;
+}
+
 static struct target_type flashcache_target = {
 	.name   = "flashcache",
 	.version= {1, 0, 4},
@@ -1677,6 +1691,7 @@ static struct target_type flashcache_target = {
 	.map    = flashcache_map,
 	.status = flashcache_status,
 	.ioctl 	= flashcache_ioctl,
+	.iterate_devices = flashcache_iterate_devices,
 };
 
 static void

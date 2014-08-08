@@ -613,7 +613,7 @@ struct cache_md_block_head {
 
 /* Default values for sysctls */
 #define DIRTY_THRESH_MIN	10
-#define DIRTY_THRESH_MAX	90
+#define DIRTY_THRESH_MAX	95
 #define DIRTY_THRESH_DEF	20
 
 #define MAX_CLEAN_IOS_SET	2
