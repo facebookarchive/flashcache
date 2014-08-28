@@ -192,7 +192,7 @@ struct cache_set {
 	u_int16_t               lru_hot_blocks, lru_warm_blocks;
 #define NUM_BLOCK_HASH_BUCKETS		512
 	u_int16_t		hash_buckets[NUM_BLOCK_HASH_BUCKETS];
-	u_int16_t		invalid_head;
+	u_int16_t		invalid_head, invalid_tail;
 };
 
 struct flashcache_errors {
