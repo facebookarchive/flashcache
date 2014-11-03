@@ -70,12 +70,18 @@ static char *flashcache_cons_sysctl_devname(struct cache_c *dmc);
 #define FLASHCACHE_PROC_ROOTDIR_NAME	"flashcache"
 
 static int
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_io_latency_init(struct ctl_table *table, int write,
+			   void __user *buffer,
+			   size_t *length, loff_t *ppos)
+#else
 flashcache_io_latency_init(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 			   struct file *file,
 #endif
 			   void __user *buffer,
 			   size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -97,12 +103,18 @@ flashcache_io_latency_init(ctl_table *table, int write,
 }
 
 static int 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_sync_sysctl(struct ctl_table *table, int write,
+		       void __user *buffer, 
+		       size_t *length, loff_t *ppos)
+#else
 flashcache_sync_sysctl(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 		       struct file *file, 
 #endif
 		       void __user *buffer, 
 		       size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -123,12 +135,18 @@ flashcache_sync_sysctl(ctl_table *table, int write,
 }
 
 static int 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_zerostats_sysctl(struct ctl_table *table, int write,
+			    void __user *buffer, 
+			    size_t *length, loff_t *ppos)
+#else
 flashcache_zerostats_sysctl(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 			    struct file *file, 
 #endif
 			    void __user *buffer, 
 			    size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -151,12 +169,18 @@ flashcache_zerostats_sysctl(ctl_table *table, int write,
 }
 
 static int 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_fallow_clean_speed_sysctl(struct ctl_table *table, int write,
+				     void __user *buffer, 
+				     size_t *length, loff_t *ppos)
+#else
 flashcache_fallow_clean_speed_sysctl(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 				     struct file *file, 
 #endif
 				     void __user *buffer, 
 				     size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -176,12 +200,18 @@ flashcache_fallow_clean_speed_sysctl(ctl_table *table, int write,
 }
 
 static int
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_dirty_thresh_sysctl(struct ctl_table *table, int write,
+			       void __user *buffer, 
+			       size_t *length, loff_t *ppos)
+#else
 flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 			       struct file *file, 
 #endif
 			       void __user *buffer, 
 			       size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -204,12 +234,18 @@ flashcache_dirty_thresh_sysctl(ctl_table *table, int write,
 }
 
 static int
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_lru_hot_pct_sysctl(struct ctl_table *table, int write,
+			      void __user *buffer, 
+			      size_t *length, loff_t *ppos)
+#else
 flashcache_lru_hot_pct_sysctl(ctl_table *table, int write,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,32)
 			       struct file *file, 
 #endif
 			       void __user *buffer, 
 			       size_t *length, loff_t *ppos)
+#endif
 {
 	struct cache_c *dmc = (struct cache_c *)table->extra1;
 
@@ -236,10 +272,17 @@ flashcache_lru_hot_pct_sysctl(ctl_table *table, int write,
 
 static struct flashcache_writeback_sysctl_table {
 	struct ctl_table_header *sysctl_header;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+	struct ctl_table	vars[FLASHCACHE_NUM_WRITEBACK_SYSCTLS];
+	struct ctl_table	dev[2];
+	struct ctl_table	dir[2];
+	struct ctl_table	root[2];
+#else
 	ctl_table		vars[FLASHCACHE_NUM_WRITEBACK_SYSCTLS];
 	ctl_table		dev[2];
 	ctl_table		dir[2];
 	ctl_table		root[2];
+#endif
 } flashcache_writeback_sysctl = {
 	.vars = {
 		{
@@ -510,10 +553,17 @@ static struct flashcache_writeback_sysctl_table {
 
 static struct flashcache_writethrough_sysctl_table {
 	struct ctl_table_header *sysctl_header;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+	struct ctl_table	vars[FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS];
+	struct ctl_table	dev[2];
+	struct ctl_table	dir[2];
+	struct ctl_table	root[2];
+#else
 	ctl_table		vars[FLASHCACHE_NUM_WRITETHROUGH_SYSCTLS];
 	ctl_table		dev[2];
 	ctl_table		dir[2];
 	ctl_table		root[2];
+#endif
 } flashcache_writethrough_sysctl = {
 	.vars = {
 		{
@@ -668,7 +718,11 @@ static struct flashcache_writethrough_sysctl_table {
 };
 
 int *
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
+flashcache_find_sysctl_data(struct cache_c *dmc, struct ctl_table *vars)
+#else
 flashcache_find_sysctl_data(struct cache_c *dmc, ctl_table *vars)
+#endif
 {
 	if (strcmp(vars->procname, "io_latency_hist") == 0)
 		return &dmc->sysctl_io_latency_hist;

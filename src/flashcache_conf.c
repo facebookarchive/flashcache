@@ -91,12 +91,14 @@ static void flashcache_sync_for_remove(struct cache_c *dmc);
 
 extern char *flashcache_sw_version;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 static int
 flashcache_wait_schedule(void *unused)
 {
 	schedule();
 	return 0;
 }
+#endif
 
 static int 
 flashcache_jobs_init(void)
@@ -1222,13 +1224,21 @@ init:
 		seq_io_move_to_lruhead(dmc, &dmc->seq_recent_ios[i]);
 	}
 	dmc->seq_io_tail = &dmc->seq_recent_ios[0];
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, TASK_UNINTERRUPTIBLE);
+#else
+	(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
+			       TASK_UNINTERRUPTIBLE);
+#endif
 	dmc->next_cache = cache_list_head;
 	cache_list_head = dmc;
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	smp_mb__after_clear_bit();
+#else
+	smp_mb__after_atomic();
+#endif
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
 
 	for (i = 0 ; i < dmc->size ; i++) {
@@ -1438,10 +1448,16 @@ flashcache_dtr(struct dm_target *ti)
 	VERIFY(dmc->num_blacklist_pids == 0);
 	dm_put_device(ti, dmc->disk_dev);
 	dm_put_device(ti, dmc->cache_dev);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
 			       TASK_UNINTERRUPTIBLE);
+#else
+	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
+			       FLASHCACHE_UPDATE_LIST,
+			       TASK_UNINTERRUPTIBLE);
+#endif
 	nodepp = &cache_list_head;
 	while (*nodepp != NULL) {
 		if (*nodepp == dmc) {
@@ -1451,7 +1467,11 @@ flashcache_dtr(struct dm_target *ti)
 		nodepp = &((*nodepp)->next_cache);
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	smp_mb__after_clear_bit();
+#else
+	smp_mb__after_atomic();
+#endif
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
 	kfree(dmc);
 }
@@ -1735,10 +1755,16 @@ flashcache_notify_reboot(struct notifier_block *this,
 {
 	struct cache_c *dmc;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
 			       TASK_UNINTERRUPTIBLE);
+#else
+	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
+			       FLASHCACHE_UPDATE_LIST,
+			       TASK_UNINTERRUPTIBLE);
+#endif
 	for (dmc = cache_list_head ; 
 	     dmc != NULL ; 
 	     dmc = dmc->next_cache) {
@@ -1750,7 +1776,11 @@ flashcache_notify_reboot(struct notifier_block *this,
 		}
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	smp_mb__after_clear_bit();
+#else
+	smp_mb__after_atomic();
+#endif
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
 	return NOTIFY_DONE;
 }
