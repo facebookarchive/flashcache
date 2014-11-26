@@ -1435,19 +1435,7 @@ flashcache_dtr(struct dm_target *ti)
 		nr_queued += dmc->cache[i].nr_queued;
 	DMINFO("cache queued jobs %d", nr_queued);	
 	flashcache_dtr_stats_print(dmc);
-	flashcache_hash_destroy(dmc);
-	flashcache_diskclean_destroy(dmc);
-	flashcache_kcopy_destroy(dmc);
-	vfree((void *)dmc->cache);
-	vfree((void *)dmc->cache_sets);
-	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
-		vfree((void *)dmc->md_blocks_buf);
-	flashcache_del_all_pids(dmc, FLASHCACHE_WHITELIST, 1);
-	flashcache_del_all_pids(dmc, FLASHCACHE_BLACKLIST, 1);
-	VERIFY(dmc->num_whitelist_pids == 0);
-	VERIFY(dmc->num_blacklist_pids == 0);
-	dm_put_device(ti, dmc->disk_dev);
-	dm_put_device(ti, dmc->cache_dev);
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
@@ -1473,6 +1461,20 @@ flashcache_dtr(struct dm_target *ti)
 	smp_mb__after_atomic();
 #endif
 	wake_up_bit(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST);
+
+	flashcache_hash_destroy(dmc);
+	flashcache_diskclean_destroy(dmc);
+	flashcache_kcopy_destroy(dmc);
+	vfree((void *)dmc->cache);
+	vfree((void *)dmc->cache_sets);
+	if (dmc->cache_mode == FLASHCACHE_WRITE_BACK)
+		vfree((void *)dmc->md_blocks_buf);
+	flashcache_del_all_pids(dmc, FLASHCACHE_WHITELIST, 1);
+	flashcache_del_all_pids(dmc, FLASHCACHE_BLACKLIST, 1);
+	VERIFY(dmc->num_whitelist_pids == 0);
+	VERIFY(dmc->num_blacklist_pids == 0);
+	dm_put_device(ti, dmc->disk_dev);
+	dm_put_device(ti, dmc->cache_dev);
 	kfree(dmc);
 }
 
