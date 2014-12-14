@@ -1148,7 +1148,7 @@ flashcache_module_procfs_init(void)
 }
 
 void
-flashcache_module_procfs_releae(void)
+flashcache_module_procfs_release(void)
 {
 #ifdef CONFIG_PROC_FS
 	(void)remove_proc_entry("flashcache/flashcache_version", NULL);

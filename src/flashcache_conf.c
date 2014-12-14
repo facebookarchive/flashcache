@@ -1920,7 +1920,7 @@ flashcache_exit(void)
 #endif
 	unregister_reboot_notifier(&flashcache_notifier);
 	flashcache_jobs_exit();
-	flashcache_module_procfs_releae();
+	flashcache_module_procfs_release();
 	kfree(flashcache_control);
 }
 
