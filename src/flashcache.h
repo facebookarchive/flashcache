@@ -759,7 +759,7 @@ void flashcache_bio_endio(struct bio *bio, int error,
 
 /* procfs */
 void flashcache_module_procfs_init(void);
-void flashcache_module_procfs_releae(void);
+void flashcache_module_procfs_release(void);
 void flashcache_ctr_procfs(struct cache_c *dmc);
 void flashcache_dtr_procfs(struct cache_c *dmc);
 
