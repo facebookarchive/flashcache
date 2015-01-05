@@ -1025,7 +1025,7 @@ flashcache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		      dmc->disk_assoc > FLASHCACHE_MAX_DISK_ASSOC ||
 		      dmc->disk_assoc < FLASHCACHE_MIN_DISK_ASSOC ||
 		      dmc->size < dmc->disk_assoc ||
-		      (dmc->assoc * dmc->block_shift) < dmc->disk_assoc))) {
+		      (dmc->assoc * dmc->block_size) < dmc->disk_assoc))) {
 			printk(KERN_ERR "Invalid Disk Assoc assoc %d disk_assoc %d size %ld\n",
 			       dmc->assoc, dmc->disk_assoc, dmc->size);
 			ti->error = "flashcache: Invalid disk associativity";
