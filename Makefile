@@ -1,5 +1,6 @@
 COMMIT_REV := $(shell git describe  --always --abbrev=12)
-KERNEL_TREE ?= /lib/modules/$(shell uname -r)/build
+KERNEL_VERSION ?= $(shell uname -r)
+KERNEL_TREE ?= /lib/modules/$(KERNEL_VERSION)/build
 export COMMIT_REV
 
 # Check for RHEL/CentOS
