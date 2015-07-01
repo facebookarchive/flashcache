@@ -41,6 +41,7 @@
 #include <linux/time.h>
 #include <asm/kmap_types.h>
 #include <linux/jhash.h>
+#include <linux/vmalloc.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #include "dm.h"

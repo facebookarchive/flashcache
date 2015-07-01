@@ -41,6 +41,7 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/vmalloc.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #include "dm.h"
