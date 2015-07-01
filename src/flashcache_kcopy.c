@@ -39,6 +39,7 @@
 #include <linux/version.h>
 #include <linux/pid.h>
 #include <linux/jhash.h>
+#include <linux/vmalloc.h>
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,26)
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,21)
