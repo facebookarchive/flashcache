@@ -6,7 +6,7 @@ EXTRA_CFLAGS += -I$(KERNEL_TREE)/drivers/md -I./ -DCOMMIT_REV="\"$(COMMIT_REV)\"
 EXTRA_CFLAGS += -I$(KERNEL_TREE)/include/ -I$(KERNEL_TREE)/include/linux 
 
 # Check for RHEL/CentOS
-RHEL5_VER ?= $(shell  if [ -e /etc/redhat-release ]; then grep 5.[0-9] /etc/redhat-release; else false; fi)
+RHEL5_VER ?= $(shell  if [ -e /etc/redhat-release ]; then grep " 5\\.[0-9]" /etc/redhat-release; else false; fi)
 RHEL5_SETUP :=
 ifneq "$(RHEL5_VER)" ""
 	RHEL5_SETUP := rhel5-setup
@@ -14,6 +14,13 @@ ifneq "$(RHEL5_VER)" ""
 	RHEL5_TREE := /usr/src/redhat/BUILD/kernel-2.6.18/linux-$(shell uname -r).$(shell uname -i)
 	RHEL5_SRC := /usr/src/kernels/$(shell uname -r)-$(shell uname -i)
 	KERNEL_TREE := $(RHEL5_TREE)
+endif
+
+# Check for RHEL/CentOS 7
+RHEL7_VER ?= $(shell if [ -e /etc/redhat-release ]; then grep " 7\\.[0-9]" /etc/redhat-release; else false; fi)
+ifneq "$(RHEL7_VER)" ""
+        RHEL7_TREE := /usr/src/kernels/$(shell uname -r)
+        KERNEL_TREE := $(RHEL7_TREE)
 endif
 
 # Check for OpenVZ (/proc/vz)
