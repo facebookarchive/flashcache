@@ -51,6 +51,11 @@ enum {
 #define FLASHCACHEDELALLWHITELIST	_IOW(FLASHCACHE_IOCTL, FLASHCACHEDELWHITELISTALL_CMD, pid_t)
 
 #ifdef __KERNEL__
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0) || ( RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3) ))
+int flashcache_message(struct dm_target *ti, unsigned argc, char **argv);
+int flashcache_prepare_ioctl(struct dm_target *ti,
+                             struct block_device **bdev, fmode_t *mode);
+#else
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 int flashcache_ioctl(struct dm_target *ti, struct inode *inode,
 		     struct file *filp, unsigned int cmd,
@@ -58,6 +63,7 @@ int flashcache_ioctl(struct dm_target *ti, struct inode *inode,
 #else
 int flashcache_ioctl(struct dm_target *ti, unsigned int cmd,
  		     unsigned long arg);
+#endif
 #endif
 void flashcache_pid_expiry_all_locked(struct cache_c *dmc);
 int flashcache_uncacheable(struct cache_c *dmc, struct bio *bio);
