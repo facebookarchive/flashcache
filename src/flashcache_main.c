@@ -216,7 +216,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			/* Kick off the write to the cache */
 			job->action = READFILL;
 			push_io(job);
-			schedule_work(&_kcached_wq);
+			queue_work(system_unbound_wq, &_kcached_wq);
 			return;
 		} else {
 			disk_error = -EIO;
@@ -336,7 +336,7 @@ flashcache_io_callback(unsigned long error, void *context)
 	if (unlikely(error || cacheblk->nr_queued > 0)) {
 		spin_unlock_irqrestore(&cache_set->set_spin_lock, flags);
 		push_pending(job);
-		schedule_work(&_kcached_wq);
+		queue_work(system_unbound_wq, &_kcached_wq);
 	} else {
 		cacheblk->cache_state &= ~BLOCK_IO_INPROG;
 		spin_unlock_irqrestore(&cache_set->set_spin_lock, flags);
@@ -686,7 +686,7 @@ flashcache_md_write_callback(unsigned long error, void *context)
 	else
 		job->error = 0;
 	push_md_complete(job);
-	schedule_work(&_kcached_wq);
+	queue_work(system_unbound_wq, &_kcached_wq);
 }
 
 static int
@@ -976,7 +976,7 @@ flashcache_md_write(struct kcached_job *job)
 		 * deadlock.
 		 */
 		push_md_io(job);
-		schedule_work(&_kcached_wq);
+		queue_work(system_unbound_wq, &_kcached_wq);
 	}
 }
 
@@ -1288,7 +1288,7 @@ out:
 			do_delayed_clean = 1;
 		spin_unlock_irq(&cache_set->set_spin_lock);
 		if (do_delayed_clean)
-			schedule_delayed_work(&dmc->delayed_clean, 1*HZ);
+			queue_delayed_work(system_unbound_wq, &dmc->delayed_clean, 1*HZ);
 	}
 	flashcache_diskclean_free(dmc, writes_list, set_dirty_list);
 }
@@ -2364,7 +2364,7 @@ flashcache_uncached_io_callback(unsigned long error, void *context)
 	else
 		job->error = 0;
 	push_uncached_io_complete(job);
-	schedule_work(&_kcached_wq);
+	queue_work(system_unbound_wq, &_kcached_wq);
 }
 
 static void
