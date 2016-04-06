@@ -68,6 +68,13 @@ static char *flashcache_cons_procfs_cachename(struct cache_c *dmc, char *path_co
 static char *flashcache_cons_sysctl_devname(struct cache_c *dmc);
 
 #define FLASHCACHE_PROC_ROOTDIR_NAME	"flashcache"
+static struct ctl_path cache_path[] = {
+     { .procname = "dev", .ctl_name = CTL_DEV, },
+     { .procname = FLASHCACHE_PROC_ROOTDIR_NAME, .ctl_name = CTL_UNNUMBERED, },
+     { }, 
+};
+
+static struct ctl_table_header *sysctl_cache_dir = NULL;
 
 static int
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,17,0)
@@ -805,9 +812,9 @@ flashcache_writeback_sysctl_register(struct cache_c *dmc)
 #endif
 	
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,21)
-	t->sysctl_header = register_sysctl_table(t->root, 0);
+	t->sysctl_header = register_sysctl_paths(cache_path, t->dev, 0);
 #else
-	t->sysctl_header = register_sysctl_table(t->root);
+	t->sysctl_header = register_sysctl_paths(cache_path, t->dev);
 #endif
 	if (t->sysctl_header == NULL)
 		goto out;
@@ -1130,6 +1137,7 @@ static struct file_operations flashcache_version_operations = {
 void
 flashcache_module_procfs_init(void)
 {
+    static struct ctl_table empty[1];
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry *entry;
 
@@ -1145,6 +1153,11 @@ flashcache_module_procfs_init(void)
 
 	}
 #endif /* CONFIG_PROC_FS */
+
+    sysctl_cache_dir = register_sysctl_paths(cache_path, empty);
+    if ( sysctl_cache_dir == NULL ) {
+        printk(KERN_ERR "Failed to create sysctl path for cache");
+    }
 }
 
 void
@@ -1154,6 +1167,10 @@ flashcache_module_procfs_release(void)
 	(void)remove_proc_entry("flashcache/flashcache_version", NULL);
 	(void)remove_proc_entry("flashcache", NULL);
 #endif /* CONFIG_PROC_FS */
+
+    if ( sysctl_cache_dir != NULL ) {
+        unregister_sysctl_table(sysctl_cache_dir);
+    }
 }
 
 static char *
