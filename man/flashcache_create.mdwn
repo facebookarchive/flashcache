@@ -58,14 +58,14 @@ performance) enabling the writethrough mode may decrease the system write
 performance. All disk reads are cached (tunable through flashcache's */proc*
 interface).
 
-*Writearound* (**ardound**) - again, very safe, writes are not written to the
+*Writearound* (**around**) - again, very safe, writes are not written to the
 cache device, but directly to the backend disk instead.  Disk blocks will only
 be cached after they are read.  All disk reads are cached (tunable through
 flashcache's */proc* interface).
 
 *Writeback* (**back**) - fastest mode but less safe.  Writes only go to the
 cache device initially, and are being written to the backend disk later,
-depending on configured system policie.  All disk reads are
+depending on configured system policy.  All disk reads are
 cached (tunable through flashcache's */proc* interface).
 
 
