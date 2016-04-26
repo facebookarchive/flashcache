@@ -46,7 +46,7 @@ Remove tmpdisk with command:
 **dmsetup remove tmpdisk**
 
 Before creating a flashcache device using the *flashcache_create* command, the
-deivce must not be mounted.
+device must not be mounted.
 
 
 # SEE ALSO
