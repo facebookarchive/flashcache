@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# Parse the flashcachetab file and load the cache volumes
-
-# Tools
+# PATH
+#PATH=/sbin:/bin:/usr/bin
 EGREP=$(which egrep)
+SYSCTL=$(which sysctl)
 
 # File with cache volumes listing
-FLASHCACHETAB=/etc/flashcachetab
+ETC_FLASHCACHE=/etc/flashcache
+FLASHCACHETAB=$ETC_FLASHCACHE/flashcachetab
+VOLUMES_SYSCTL_PARAMS=$ETC_FLASHCACHE/flashcache_vol.conf
 
 cat "$FLASHCACHETAB" | $EGREP -v "^#" | while read line ;
     do
@@ -18,4 +20,9 @@ cat "$FLASHCACHETAB" | $EGREP -v "^#" | while read line ;
             (>&2 echo "ERROR loading Flashcache volume ${items[1]} loaded from ${items[0]}") 
         fi
     done
-
+if [ -f "$VOLUMES_SYSCTL_PARAMS" ] ; then 
+    echo "Loading cache volumes configuration from $VOLUMES_SYSCTL_PARAMS"
+    $SYSCTL -p "$VOLUMES_SYSCTL_PARAMS"
+else
+    echo "No cache volumes configuration file has been found!"
+fi
