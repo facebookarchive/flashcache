@@ -27,5 +27,12 @@ This builds both the flashcache.ko and 3 utilities.
 flascache-sa-guide.txt has details on how to create and load
 flashcache volumes.
 
+Loading flashcache volumes on Systemd :
+-------------------------------------
+On folder "systemd" you will find the necessary components and a
+README file that describes how to set up those files to load
+flashcache volumes when using this init system.
+
 Mohan Srinivasan
 Paul Saab
+Manuel Bernal-Llinares
