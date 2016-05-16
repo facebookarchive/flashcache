@@ -9,6 +9,13 @@ the system:
     - flashcache_loader, this script is called by the service "start" action, it parses the flashcachetab file, and
     calls flashcache_load to activate the cache volumes specified on the file.
     - flashcachetab, this file contains a flashcache volume per line, with optional volume name, to be activated by
-    flashcache_loader script. It should be placed at /etc
+    flashcache_loader script.
+    - flashcache_vol.conf, sysctl style file with configuration parameters for the cache volumes
+
+All these files should be installed at:
+/etc/systemd/system/flashcache.service
+/etc/init.d/flashcache_loader
+/etc/flashcache/flashcachetab
+/etc/flashcache/flashcache_vol.conf (optional)
 
 This files have been tested on a Debian 8.4, using flashcache compiled from its source code at github.com/facebookarchive/flashcache
