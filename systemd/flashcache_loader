@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Parse the flashcachetab file and load the cache volumes
+
+# Tools
+EGREP=$(which egrep)
+
+# File with cache volumes listing
+FLASHCACHETAB=/etc/flashcachetab
+
+cat "$FLASHCACHETAB" | $EGREP -v "^#" | while read line ;
+    do
+        items=($line)
+        echo "Loading ${items[0]} (${items[1]})"
+        if flashcache_load ${items[0]} ${items[1]} 2> /dev/null; then
+           echo "Flashcache volume ${items[1]} loaded from ${items[0]}"
+        else
+            (>&2 echo "ERROR loading Flashcache volume ${items[1]} loaded from ${items[0]}") 
+        fi
+    done
+
