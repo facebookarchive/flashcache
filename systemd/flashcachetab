@@ -1,0 +1,2 @@
+# This file contains a list of devices from which to load flashcache volumes
+# <cache_device>    <optional_cache_volume_name>
