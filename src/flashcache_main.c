@@ -514,7 +514,7 @@ flashcache_do_pending_noerror(struct kcached_job *job)
 		cacheblk->nr_queued--;
 		if (pending_job->action == INVALIDATE) {
 			DPRINTK("flashcache_do_pending: INVALIDATE  %llu",
-				next_job->bio->bi_sector);
+				pending_job->bio->bi_sector);
 			VERIFY(pending_job->bio != NULL);
 			queued = flashcache_inval_blocks(dmc, pending_job->bio);
 			if (queued) {
@@ -1719,7 +1719,7 @@ flashcache_inval_block_set_v3(struct cache_c *dmc, int set, struct bio *bio,
 	    (cacheblk->nr_queued == 0)) {
 		atomic_dec(&dmc->cached_blocks);
 		DPRINTK("Cache invalidate (!BUSY): Block %llu %lx",
-			start_dbn, cacheblk->cache_state);
+			cacheblk->dbn, cacheblk->cache_state);
 		flashcache_hash_remove(dmc, index);
 		cacheblk->cache_state = INVALID;
 		flashcache_invalid_insert(dmc, index);
