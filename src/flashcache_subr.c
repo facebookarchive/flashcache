@@ -191,12 +191,17 @@ flashcache_invalid_insert(struct cache_c *dmc, int index)
 	/* It cannot be on the per-set hash */
 	VERIFY(cacheblk->hash_prev == FLASHCACHE_NULL);
 	VERIFY(cacheblk->hash_next == FLASHCACHE_NULL);
-	/* Insert this block at the head of the invalid list */
+
+	/* Insert this block at the tail of the invalid list */
 	cache_set = &dmc->cache_sets[set];
-	cacheblk->hash_next = cache_set->invalid_head;
-	if (cache_set->invalid_head != FLASHCACHE_NULL)
-		dmc->cache[start_index + cache_set->invalid_head].hash_prev = set_ix;
-	cache_set->invalid_head = set_ix;
+	cacheblk->hash_next = FLASHCACHE_NULL;
+	if (cache_set->invalid_tail != FLASHCACHE_NULL)
+		dmc->cache[start_index + cache_set->invalid_tail].hash_next = set_ix;
+	cacheblk->hash_prev = cache_set->invalid_tail;
+
+	if (cache_set->invalid_head == FLASHCACHE_NULL)
+		cache_set->invalid_head = set_ix;
+	cache_set->invalid_tail = set_ix;
 }
 
 void
@@ -223,10 +228,11 @@ flashcache_invalid_remove(struct cache_c *dmc, int index)
 	if (cacheblk->hash_next != FLASHCACHE_NULL) {
 		dmc->cache[start_index + cacheblk->hash_next].hash_prev = 
 			cacheblk->hash_prev;
-	}
+	} else
+		cache_set->invalid_tail = cacheblk->hash_prev;
+
 	cacheblk->hash_prev = FLASHCACHE_NULL;
 	cacheblk->hash_next = FLASHCACHE_NULL;
-	
 }
 
 /* Cache set block hash management */
@@ -239,6 +245,7 @@ flashcache_hash_init(struct cache_c *dmc)
 	for (i = 0 ; i < (dmc->size >> dmc->assoc_shift) ; i++) {
 		cache_set = &dmc->cache_sets[i];
 		cache_set->invalid_head = FLASHCACHE_NULL;
+		cache_set->invalid_tail = FLASHCACHE_NULL;
 		for (j = 0 ; j < NUM_BLOCK_HASH_BUCKETS ; j++) 
 			cache_set->hash_buckets[j] = FLASHCACHE_NULL;
 	}
