@@ -445,7 +445,10 @@ flashcache_do_pending_error(struct kcached_job *job)
 		}
 		VERIFY(cacheblk->nr_queued == 0);
 	} else
+	{
 		flashcache_free_pending_jobs(dmc, cacheblk, job->error);
+		flashcache_bio_endio(job->bio, error, dmc, &job->io_start_time);
+	}
 	spin_unlock_irq(&cache_set->set_spin_lock);
 	if (bio != NULL) {
 		/*
