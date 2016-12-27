@@ -478,15 +478,21 @@ flashcache_reclaim_lru_get_old_block(struct cache_c *dmc, int start_index, int *
 			 * Swap this block with the MRU block in the warm list.
 			 * To maintain equilibrium between the lists
 			 * 1) We put this block in the MRU position on the warm list
-			 * 2) Remove the block in the LRU position on the warm list and
+			 * 2) Remove the block in the MRU position on the warm list and
 			 * 3) Move that block to the LRU position on the hot list.
 			 */
-			if (!flashcache_reclaim_demote_block(dmc, *index))
+			if (!flashcache_reclaim_demote_block(dmc, *index)){
 				/* 
 				 * We cannot demote this block to the warm list
-				 * just move it to the MRU position.
+				 * just move it to the MRU position in the warm list.
+				 * So,before we move the hot block to the MRU position in the warm list,
+				 * we should change its lru_state to LRU_WARM.
 				 */
+				cacheblk->lru_state &= ~LRU_HOT;
+				cacheblk->lru_state |= LRU_WARM;
+				cacheblk->use_cnt = 0;
 				flashcache_reclaim_move_to_mru(dmc, *index);
+			}
 			break;
 		}
 		lru_rel_index = cacheblk->lru_next;
