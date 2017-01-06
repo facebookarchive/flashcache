@@ -21,6 +21,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  ****************************************************************************/
+static inline sector_t to_sector64(sector_t n)
+{
+       return (n >> SECTOR_SHIFT);
+}
 
 /* Like ASSERT() but always compiled in */
 
