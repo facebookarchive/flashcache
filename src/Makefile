@@ -1,4 +1,4 @@
-COMMIT_REV ?= $(shell git describe  --always --abbrev=12)
+COMMIT_REV ?= $(shell dpkg-query -W -f='$${Version}' flashcache-dkms | awk -F "-" '{print $$1}' | cut -d\: -f2)
 KERNEL_SOURCE_VERSION ?= $(shell uname -r)
 KERNEL_TREE ?= /lib/modules/$(KERNEL_SOURCE_VERSION)/build
 
@@ -35,7 +35,7 @@ obj-m += flashcache.o
 flashcache-objs := flashcache_conf.o flashcache_main.o flashcache_subr.o flashcache_ioctl.o flashcache_procfs.o flashcache_reclaim.o flashcache_kcopy.o
 
 .PHONY: all
-all: modules utils
+all: modules
 
 .PHONY:    modules
 modules: $(RHEL5_SETUP)
@@ -60,7 +60,7 @@ ocf_install:
 	make -C ocf install
 
 .PHONY: install
-install: modules_install utils_install ocf_install
+install: modules_install ocf_install
 
 .PHONY: clean
 clean:

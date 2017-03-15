@@ -7,33 +7,33 @@ INSTALL_DIR = $(DESTDIR)/sbin/
 all: $(PROGRAMS)
 
 get_agsize: get_agsize.o
-	$(CC) $^ -o $@
+	$(LINK.o) $^ -o $@
 
 -include get_agsize.d
 
 flashcache_create: flashcache_create.o
-	$(CC) $^ -o $@
+	$(LINK.o) $^ -o $@
 
 -include flashcache_create.d
 
 flashcache_destroy: flashcache_destroy.o
-	$(CC) $^ -o $@
+	$(LINK.o) $^ -o $@
 
 -include flashcache_destroy.d
 
 flashcache_load: flashcache_load.o
-	$(CC) $^ -o $@
+	$(LINK.o) $^ -o $@
 
 -include flashcache_load.d
 
 flashcache_setioctl: flashcache_setioctl.o
-	$(CC) $^ -o $@
+	$(LINK.o) $^ -o $@
 
 -include flashcache_setioctl.d
 
 %.o: %.c
-	$(CC) -c $(CFLAGS) $*.c -o $*.o
-	@$(CC) -MM $(CFLAGS) -MF $*.d -MT $*.o $*.c
+	$(COMPILE.c) $*.c -o $*.o
+	@$(COMPILE.c) -MM -MF $*.d -MT $*.o $*.c
 
 .PHONY: install
 install: $(PROGRAMS)

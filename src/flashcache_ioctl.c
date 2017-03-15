@@ -503,6 +503,82 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
  * exit, for cases where the process dies after marking itself
  * non-cacheable.
  */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+int
+flashcache_prepare_ioctl(struct dm_target *ti,
+			 struct block_device **bdev, fmode_t *mode)
+{
+	struct cache_c *dmc = (struct cache_c *) ti->private;
+
+	*bdev = dmc->disk_dev->bdev;
+
+	return 0;
+}
+
+int
+flashcache_message(struct dm_target *ti, unsigned argc, char **argv)
+{
+	struct cache_c *dmc = (struct cache_c *) ti->private;
+	int list;
+	long long upid;
+	pid_t pid = 0;
+
+	/*
+	 * whitelist|blacklist add|del <pid>
+	 * whitelist|blacklist delall
+	 */
+	if (argc < 2)
+		return -EINVAL;
+
+	/* Decode the primary command. */
+	if (strcmp(argv[0], "whitelist") == 0) {
+		list = FLASHCACHE_WHITELIST;
+	} else if (strcmp(argv[0], "blacklist") == 0) {
+		list = FLASHCACHE_BLACKLIST;
+	} else {
+		return -EINVAL;
+	}
+
+	/* Decode the sub-command. */
+	if (strcmp(argv[1], "add") == 0) {
+		int rr;
+		if (argc != 3)
+			return -EINVAL;
+
+		/* Decode the pid. */
+		if (kstrtoull(argv[2], 10, &upid))
+			return -EINVAL;
+		pid = (pid_t)upid;
+
+		flashcache_add_pid(dmc, pid, list);
+		return 0;
+
+	} else if (strcmp(argv[1], "del") == 0) {
+		if (argc != 3)
+			return -EINVAL;
+
+		/* Decode the pid. */
+		if (kstrtoull(argv[2], 10, &upid))
+			return -EINVAL;
+		pid = (pid_t)upid;
+
+		flashcache_del_pid(dmc, pid, list);
+		return 0;
+
+	} else if (strcmp(argv[1], "delall") == 0) {
+		if (argc != 2)
+			return -EINVAL;
+
+		flashcache_del_all_pids(dmc, list, 0);
+		return 0;
+
+	} else {
+		return -EINVAL;
+	}
+}
+
+#else
+
 int 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,27)
 flashcache_ioctl(struct dm_target *ti, struct inode *inode,
@@ -561,3 +637,5 @@ flashcache_ioctl(struct dm_target *ti, unsigned int cmd, unsigned long arg)
 	}
 
 }
+
+#endif
