@@ -1,0 +1,15 @@
+[Unit]
+Description=Flashcache volumes loading service
+DefaultDependencies=no
+Requires=lvm2-monitor.service -.mount boot.mount lvm2-activation-early.service lvm2-activation.service systemd-fsck-root.service systemd-remount-fs.service
+After=lvm2-monintor.service -.mount boot.mount lvm2-activation-early.service lvm2-activation.service systemd-fsck-root.service systemd-remount-fs.service
+Wants=lvm2-monitor.service lvm2-activation-early.service lvm2-activation.service
+Before=checkfs.service mountall.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/etc/init.d/flashcache_loader
+
+[Install]
+WantedBy=default.target
