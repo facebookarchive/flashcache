@@ -325,7 +325,7 @@ flashcache_io_callback(unsigned long error, void *context)
 			}
 		} else {
 			dmc->flashcache_errors.ssd_write_errors++;
-			if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH)
+			if (dmc->cache_mode == FLASHCACHE_WRITE_THROUGH) {
 				/* 
 				 * We don't know if the IO failed because of a ssd write
 				 * error or a disk write error. Bump up both.
@@ -335,6 +335,7 @@ flashcache_io_callback(unsigned long error, void *context)
 				 */
 			        disk_error = -EIO;
 				dmc->flashcache_errors.disk_write_errors++;
+			}
 		}
 		break;
 	}
