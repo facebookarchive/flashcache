@@ -1753,7 +1753,7 @@ flashcache_sync_for_remove(struct cache_c *dmc)
 		/* Wait for all the dirty blocks to get written out, and any other IOs */
 		wait_event(dmc->destroyq, !atomic_read(&dmc->nr_jobs));
 		cancel_delayed_work(&dmc->delayed_clean);
-		flush_scheduled_work();
+		flush_workqueue(system_unbound_wq);
 	} while (!dmc->sysctl_fast_remove && atomic_read(&dmc->nr_dirty) > 0);
 }
 

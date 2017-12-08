@@ -127,7 +127,7 @@ flashcache_sync_sysctl(ctl_table *table, int write,
 		if (dmc->sysctl_do_sync) {
 			dmc->sysctl_stop_sync = 0;
 			cancel_delayed_work(&dmc->delayed_clean);
-			flush_scheduled_work();
+			flush_workqueue(system_unbound_wq);
 			flashcache_sync_all(dmc);
 		}
 	}
