@@ -503,7 +503,7 @@ skip_sequential_io(struct cache_c *dmc, struct bio *bio)
  * exit, for cases where the process dies after marking itself
  * non-cacheable.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0) || ( RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3) ))
 int
 flashcache_prepare_ioctl(struct dm_target *ti,
 			 struct block_device **bdev, fmode_t *mode)
@@ -541,7 +541,6 @@ flashcache_message(struct dm_target *ti, unsigned argc, char **argv)
 
 	/* Decode the sub-command. */
 	if (strcmp(argv[1], "add") == 0) {
-		int rr;
 		if (argc != 3)
 			return -EINVAL;
 
