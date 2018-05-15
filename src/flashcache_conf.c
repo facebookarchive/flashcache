@@ -92,7 +92,7 @@ static void flashcache_sync_for_remove(struct cache_c *dmc);
 
 extern char *flashcache_sw_version;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 static int
 flashcache_wait_schedule(void *unused)
 {
@@ -1225,7 +1225,7 @@ init:
 		seq_io_move_to_lruhead(dmc, &dmc->seq_recent_ios[i]);
 	}
 	dmc->seq_io_tail = &dmc->seq_recent_ios[0];
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, TASK_UNINTERRUPTIBLE);
 #else
@@ -1235,7 +1235,7 @@ init:
 	dmc->next_cache = cache_list_head;
 	cache_list_head = dmc;
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	smp_mb__after_clear_bit();
 #else
 	smp_mb__after_atomic();
@@ -1437,7 +1437,7 @@ flashcache_dtr(struct dm_target *ti)
 	DMINFO("cache queued jobs %d", nr_queued);	
 	flashcache_dtr_stats_print(dmc);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
@@ -1456,7 +1456,7 @@ flashcache_dtr(struct dm_target *ti)
 		nodepp = &((*nodepp)->next_cache);
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	smp_mb__after_clear_bit();
 #else
 	smp_mb__after_atomic();
@@ -1713,7 +1713,7 @@ static struct target_type flashcache_target = {
 	.dtr    = flashcache_dtr,
 	.map    = flashcache_map,
 	.status = flashcache_status,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,4,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,4,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	.ioctl 	= flashcache_ioctl,
 #else
 	.prepare_ioctl 	= flashcache_prepare_ioctl,
@@ -1763,7 +1763,7 @@ flashcache_notify_reboot(struct notifier_block *this,
 {
 	struct cache_c *dmc;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	(void)wait_on_bit_lock(&flashcache_control->synch_flags, 
 			       FLASHCACHE_UPDATE_LIST,
 			       flashcache_wait_schedule, 
@@ -1784,7 +1784,7 @@ flashcache_notify_reboot(struct notifier_block *this,
 		}
 	}
 	clear_bit(FLASHCACHE_UPDATE_LIST, &flashcache_control->synch_flags);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,17,0) && ( RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,3) ))
 	smp_mb__after_clear_bit();
 #else
 	smp_mb__after_atomic();
