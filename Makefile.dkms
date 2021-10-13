@@ -30,7 +30,7 @@ boot_conf: utils
 	if test -d /etc/initramfs-tools/hooks; then \
 		install -o root -g root src/flashcache.hook /etc/initramfs-tools/hooks/flashcache ; \
 		install -o root -g root src/utils/flashcache_scan /etc/initramfs-tools/scripts/init-premount/ ; \
-		update-initramfs -k $(shell uname -r) -u ; \
+		update-initramfs -k $(KERNEL_VERSION) -u ; \
 	fi
 
 .PHONY: utils

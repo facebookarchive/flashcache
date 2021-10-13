@@ -33,6 +33,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <linux/types.h>
 #include <flashcache_ioctl.h>
 
@@ -40,6 +41,55 @@ void usage(char *pname)
 {
 	fprintf(stderr, "Usage: %s (-c | -a | -r) (-b pid |-w pid) ssd_devname \n", pname);
 	exit(1);
+}
+
+void dm_message(char *cachedev, char list, char action, pid_t pid)
+{
+	char pidstr[32];
+
+	char *argv[] = {
+		"/sbin/dmsetup",
+		"message",
+		cachedev,
+		"0",
+		/* command */ NULL,
+		/* sub-command */ NULL,
+		/* pid */ NULL,
+		NULL,
+	};
+
+	switch (list) {
+	case 'w':
+		argv[4] = "whitelist";
+		break;
+	case 'b':
+		argv[4] = "blacklist";
+		break;
+	default:
+		return;
+	}
+
+	switch (action) {
+	case 'a':
+		argv[5] = "add";
+		break;
+	case 'r':
+		argv[5] = "del";
+		break;
+	case 'c':
+		argv[5] = "delall";
+		break;
+	}
+
+	switch (action) {
+	case 'a':
+	case 'r':
+		snprintf(pidstr, sizeof(pidstr), "%lld", (long long)pid);
+		argv[6] = pidstr;
+		break;
+	}
+
+	execv(argv[0], argv);
 }
 
 int
@@ -50,6 +100,7 @@ main(int argc, char **argv)
 	intmax_t pidmax;
 	char *tmp;
 	pid_t pid;
+	int err;
 
 	while ((c = getopt(argc, argv, "carb:w:")) != -1) {
 		switch (c) {
@@ -125,11 +176,18 @@ main(int argc, char **argv)
 				break;
 		}
 	}
+	err = errno;
 	close(cache_fd);
+	/*
+	 * Failed with an error indicating the ioctl was not appropriate for the device
+	 * switch to using DM messages.
+	 */
+	if (result < 0 && err == ENOTTY) {
+		dm_message(cachedev, list, action, pid);
+	}
 	if (result < 0) {
 		fprintf(stderr, "ioctl failed on %s\n", cachedev);
 		exit(1);
 	}
 	return 0;
 }
-

@@ -736,8 +736,11 @@ flashcache_bio_endio(struct bio *bio, int error,
 		flashcache_record_latency(dmc, start_time);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,24)
 	bio_endio(bio, bio->bi_size, error);
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0)
 	bio_endio(bio, error);
+#else
+	bio->bi_error = error;
+	bio_endio(bio);
 #endif	
 }
 
